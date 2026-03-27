@@ -2,7 +2,7 @@ name: Deploy naar GitHub Pages
 
 on:
   push:
-    branches: "main"  # Verander dit naar "master" als je hoofdbranch zo heet
+    branches: "main"  
 
 permissions:
   contents: read
