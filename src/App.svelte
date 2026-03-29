@@ -103,6 +103,7 @@
       center: [4.44, 51.915],
       zoom: 13,
       attributionControl: false,
+      fadeDuration: 0, // <--- VOEG DEZE REGEL TOE
     });
 
     map.addControl(
@@ -119,38 +120,26 @@
     map.on("move", updateLine);
   }
 
-  // Functie om de dynamische bezier curve te berekenen
+  // Functie om de simpele strakke lijn te berekenen
   function updateLine() {
     if (!selectedPlace || !map) {
       linePath = "";
       return;
     }
 
-    // 1. Zoek de positie van de actieve marker op het scherm
+    // 1. Zoek de positie van de actieve marker op het scherm (Punt A)
     const pos = map.project([selectedPlace.longitude, selectedPlace.latitude]);
     const startX = pos.x;
     const startY = pos.y;
 
-    // 2. Zoek de positie van de pop-up (vast op top-right)
-    // De pop-up staat op right: 20px, top: 20px en is 240px breed
+    // 2. Zoek de positie van de pop-up (Vast op top-right)
+    // De pop-up staat op right: 20px, top: 20px en is 300px breed.
+    // We trekken de lijn naar het midden van de linkerzijde van de pop-up.
     const endX = window.innerWidth - 300 - 20;
-    const endY = 20 + 80; // Ongeveer het midden van de linkerzijde van de pop-up
+    const endY = 20 + 100; // Ongeveer het midden van de linkerzijde van de pop-up
 
-    // 3. Teken een organische curve (dik bij popup, dun bij marker)
-    // We tekenen een gesloten vorm (pad heen, boogje, pad terug) om de dikte te faken
-    const ctrl1X = startX + (endX - startX) * 0.3;
-    const ctrl1Y = startY;
-    const ctrl2X = startX + (endX - startX) * 0.7;
-    const ctrl2Y = endY;
-
-    // We bouwen een polygoon die taps toeloopt
-    linePath = `
-      M ${startX} ${startY}
-      C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY - 6}
-      L ${endX} ${endY + 6}
-      C ${ctrl2X} ${ctrl2Y}, ${ctrl1X} ${ctrl1Y}, ${startX} ${startY}
-      Z
-    `;
+    // 3. Teken een simpele strakke rechte lijn (M = Move To, L = Line To)
+    linePath = `M ${startX} ${startY} L ${endX} ${endY}`;
   }
 
   function closePopup() {
@@ -195,8 +184,9 @@
       }
 
       // Klik event voor de nieuwe custom pop-up
+      // Klik event voor de marker
       el.addEventListener("click", (e) => {
-        e.stopPropagation(); // Voorkom dat de map klik getriggerd wordt
+        e.stopPropagation(); // Voorkom dat de kaart-klik getriggerd wordt
 
         if (activeMarkerElement)
           activeMarkerElement.classList.remove("active-glow");
@@ -205,8 +195,17 @@
         activeMarkerElement = el;
         el.classList.add("active-glow");
 
-        // Kleine timeout om te zorgen dat de DOM is bijgewerkt
-        setTimeout(updateLine, 10);
+        // --- NIEUW: Centreer de kaart op de aangeklikte marker ---
+        map.flyTo({
+          center: [place.longitude, place.latitude],
+          essential: true, // Zorgt ervoor dat de animatie ook werkt bij gebruikers met 'reduced motion' instellingen
+          speed: 0.1, // Snelheid van de animatie (lager is langzamer)
+          curve: 0, // De curve van de vliegbeweging
+        });
+
+        // Kleine timeout om te zorgen dat de lijn pas berekend wordt
+        // als de kaart op zijn nieuwe plek staat
+        // setTimeout(updateLine, 10);
       });
 
       const m = new maplibregl.Marker({ element: el })
@@ -327,26 +326,28 @@
 
   <div class="map-container" bind:this={mapContainer}>
     {#if selectedPlace}
-      <svg class="line-overlay">
-        <path d={linePath} fill="#8450ff" opacity="0.6" />
-      </svg>
-    {/if}
-
-    {#if selectedPlace}
       <div
         class="fixed-air-popup"
         onclick={(e) => e.stopPropagation()}
         role="presentation"
       >
-        <button class="close-btn" onclick={closePopup}>×</button>
-        <div class="air-popup">
+        <div class="popup-top-bar">
           <h3 class="popup-title">{selectedPlace.name}</h3>
+          <button class="close-btn" onclick={closePopup} aria-label="Sluiten"
+            >×</button
+          >
+        </div>
+
+        <div class="air-popup">
           <div class="popup-info-row">
-            <span class="label">Gebied:</span>
-            {selectedPlace.gebied || "Rotterdam"}
+            <span class="label">Locatie / Gebied</span>
+            <span class="popup-value"
+              >{selectedPlace.gebied || "Rotterdam"}</span
+            >
           </div>
+
           <div class="popup-info-row">
-            <span class="label">Domein:</span>
+            <span class="label">Domeinen</span>
             <div class="popup-tags">
               {#each selectedPlace.domeinen.split(";") as d}
                 <span
@@ -359,8 +360,9 @@
               {/each}
             </div>
           </div>
+          <!-- 
           <div class="popup-info-row">
-            <span class="label">M4H Principes:</span>
+            <span class="label">M4H Principes</span>
             <div class="popup-tags">
               {#each selectedPlace.m4h_principes.split(";") as d}
                 <span
@@ -372,11 +374,12 @@
                 </span>
               {/each}
             </div>
-          </div>
+          </div> -->
+
           {#if selectedPlace.website}
             <div class="popup-footer">
               <a href={selectedPlace.website} target="_blank" class="popup-link"
-                >Website ↗</a
+                >Bezoek website ↗</a
               >
             </div>
           {/if}
@@ -405,30 +408,40 @@
   .sidebar {
     width: 280px;
     height: 100%;
-    background: #fffcf4;
-    border-right: 1px solid #e0ddd5;
+    background: #fdfaf0; /* Wit als basis voor een cleanere look */
+    border-right: 1px solid rgba(0, 0, 0, 0.05);
     display: flex;
     flex-direction: column;
     z-index: 10;
     overflow-y: auto;
     scrollbar-gutter: stable;
+    font-family: "Helvetica", Arial, sans-serif;
   }
 
   .brand {
-    padding: 20px;
+    padding: 24px 20px;
     font-weight: 900;
-    font-size: 1.5rem;
-    letter-spacing: -1px;
+    font-size: 1.4rem;
+    letter-spacing: -0.5px;
     color: #8450ff;
+    background-color: #fdfaf0; /* Matcht nu met de paarse balk van de popup! */
+    text-align: center;
   }
 
   .accordion {
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    background: #fdfaf0;
+    transition: background-color 0.2s ease;
+  }
+
+  /* Gekleurde achtergrond als een sectie open staat */
+  .accordion:has(.accordion-content) {
+    background: #fdfaf0; /* Matcht met de lichte hover-kleur van de popup */
   }
 
   .accordion-header {
     width: 100%;
-    padding: 15px 20px;
+    padding: 16px 20px;
     background: none;
     border: none;
     display: flex;
@@ -436,36 +449,69 @@
     align-items: center;
     cursor: pointer;
     font-family: inherit;
-    font-weight: bold;
+    font-weight: 800;
     text-transform: uppercase;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     letter-spacing: 0.05rem;
     color: #8450ff;
+    text-align: left;
   }
 
   .accordion-header:hover {
-    background: #8450ff10;
+    background: rgba(132, 80, 255, 0.05);
   }
+
+  .accordion-header .icon {
+    font-size: 1.1rem;
+    font-weight: normal;
+    color: #999;
+  }
+
   .accordion-content {
     padding: 0 20px 20px 20px;
+    text-align: left;
+  }
+
+  .accordion-content p {
+    font-size: 0.8rem;
+    color: #666;
+    line-height: 1.4;
+    margin: 0;
   }
 
   .filter-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 8px 0;
+    margin: 10px 0;
     font-size: 0.8rem;
-    color: #555;
+    color: #333;
+    font-weight: 500;
     cursor: pointer;
+    text-align: left;
+  }
+
+  /* Subtiele hiërarchie-labeling binnen de sidebar content */
+  .filter-text {
+    flex-grow: 1;
+    text-align: left;
   }
 
   .stats {
     margin-top: auto;
-    padding: 20px;
-    font-size: 0.75rem;
-    color: #888;
+    padding: 16px 20px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02rem;
+    color: #999;
+    font-weight: bold;
     background: #fdfaf0;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+  }
+
+  .stats strong {
+    color: #8450ff;
+    font-size: 0.85rem;
   }
 
   input[type="checkbox"] {
@@ -481,6 +527,8 @@
 
   .toggle-text {
     font-size: 0.75rem;
+    font-weight: bold;
+    color: #666;
   }
 
   .switch {
@@ -523,14 +571,23 @@
   input:checked + .slider {
     background-color: #8450ff;
   }
+
   input:checked + .slider:before {
     transform: translateX(14px);
   }
 
   .separator {
     border: 0;
-    border-top: 1px solid #eee;
-    margin: 10px 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    margin: 12px 0;
+  }
+
+  .color-swatch {
+    width: 12px;
+    height: 12px;
+    display: inline-block;
+    border-radius: 3px; /* Matchend met de p-tags uit de popup */
+    border: 1px solid rgba(0, 0, 0, 0.1);
   }
 
   .map-container {
@@ -544,89 +601,121 @@
     position: absolute;
     top: 20px;
     right: 20px;
-    width: 300px; /* Vaste grootte */
-    background: white;
-    border-radius: 5px;
-    border-top: 6px solid #8450ff;
+    width: 320px;
+    background: #fffcf4;
+    border-radius: 6px; /* Iets scherper voor een strakker effect bij het vierkant */
     box-shadow:
-      0 10px 25px rgba(0, 0, 0, 0.1),
-      5px 5px 0px rgba(132, 80, 255, 0.1);
+      0 10px 30px rgba(0, 0, 0, 0.1),
+      5px 5px 0px rgba(132, 80, 255, 0.15);
     z-index: 2000;
     animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1);
     font-family: "Helvetica", Arial, sans-serif;
+    text-align: left;
+    overflow: hidden; /* Cruciaal: houdt de paarse balk binnen de border-radius */
+    border: 1px solid rgba(0, 0, 0, 0.05);
   }
 
-  .close-btn {
-    position: absolute;
-    top: 5px;
-    right: 10px;
-    background: none;
-    border: none;
-    font-size: 20px;
-    cursor: pointer;
-    color: #888;
+  /* Paarse bovenbalk met vaste hoogte */
+  .popup-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center; /* Centreert de knop verticaal ten opzichte van de balk */
+    padding: 12px 16px;
+    background-color: #8450ff; /* AIR Paars */
+    gap: 12px;
+
+    /* Vaste hoogte: 2.8rem voor de tekst + 24px padding = ~68px hoog */
+    /* Dit is hoog genoeg voor exact 2 regels tekst */
+    min-height: 68px;
+    box-sizing: border-box;
   }
+
+  /* Titel met witte letters in de top bar */
+  .popup-title {
+    margin: 0;
+    font-size: 1.1rem; /* Ietsje kleiner zodat 2 regels gegarandeerd passen */
+    font-weight: 800;
+    line-height: 1.2;
+    color: #ffffff; /* Wit */
+    flex-grow: 1;
+
+    /* Zorgt dat de tekst netjes verdeeld wordt over max 2 regels */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Vierkante witte sluitknop (Perfect gecentreerd) */
+  .close-btn {
+    background: #ffffff;
+    border: none;
+    font-size: 22px; /* Iets groter kruisje vult het blokje mooier op */
+    font-family: Arial, sans-serif; /* Arial heeft een heel symmetrisch kruisje */
+    cursor: pointer;
+    color: #8450ff; /* Paars kruisje */
+    width: 28px;
+    height: 28px;
+
+    /* Flexbox voor perfecte centrering in alle browsers */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 4px;
+    transition: all 0.2s;
+    padding: 0;
+    flex-shrink: 0; /* Voorkomt dat het knopje platgedrukt wordt */
+
+    /* Reset voor vreemde browser-lijnhéritages */
+    line-height: 0;
+  }
+
   .close-btn:hover {
-    color: #333;
+    background-color: #fdfaf0;
+    color: #1a1a1a;
   }
 
   .air-popup {
     padding: 16px;
   }
 
-  .popup-title {
-    margin: 0 0 15px 0;
-    font-size: 1.2rem;
-    font-weight: 900;
-    line-height: 1.1;
-    color: #1a1a1a;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 10px;
-  }
-
   .popup-info-row {
-    font-size: 0.8rem;
-    margin-bottom: 10px;
-    color: #555;
+    margin-bottom: 14px;
   }
 
   .popup-info-row .label {
     font-weight: bold;
-    color: #888;
+    color: #999;
     text-transform: uppercase;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
+    letter-spacing: 0.02rem;
     display: block;
-    margin-bottom: 3px;
+    margin-bottom: 4px;
+  }
+
+  .popup-value {
+    font-size: 0.85rem;
+    color: #333;
+    font-weight: 500;
   }
 
   .popup-footer {
-    margin-top: 15px;
-    padding-top: 10px;
-    border-top: 1px dotted #ccc;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
   }
 
   @keyframes popup-slide-in {
     from {
       opacity: 0;
-      transform: translateX(20px);
+      transform: translateY(-10px);
     }
     to {
       opacity: 1;
-      transform: translateX(0);
+      transform: translateY(0);
     }
   }
-
-  /* SVG OVERLAY VOOR DE LIJN */
-  .line-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none; /* Klikken gaan door de SVG heen naar de map */
-    z-index: 1500;
-  }
-
   /* SIDEBAR KLEUREN */
   .color-swatch {
     width: 12px;
@@ -637,6 +726,7 @@
   }
   .filter-text {
     flex-grow: 1;
+    text-align: left;
   }
 
   /* TAGS EN LINKS */
@@ -681,7 +771,7 @@
     border-radius: 50%;
     cursor: pointer;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    /* transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); */
   }
 
   :global(.air-marker:hover) {
@@ -692,8 +782,8 @@
 
   /* De actieve grotere marker met gloeiende rand */
   :global(.air-marker.active-glow) {
-    width: 26px !important;
-    height: 26px !important;
+    width: 24px !important;
+    height: 24px !important;
     z-index: 1001;
     border-color: #fff;
     box-shadow:
