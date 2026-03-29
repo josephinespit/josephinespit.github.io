@@ -9,7 +9,7 @@
   let map = $state();
   let allPlaces = $state([]);
   let markers = [];
-  let visualMode = $state("default");
+  let visualMode = $state("domein");
 
   // Nieuwe state voor actieve pop-up en lijn
   let selectedPlace = $state(null);
@@ -50,7 +50,7 @@
     default: "#8450FF",
   };
 
-  let openSections = $state({ info: true, gebied: false, domein: true });
+  let openSections = $state({ info: false, gebied: false, domein: false });
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
@@ -100,8 +100,8 @@
     map = new maplibregl.Map({
       container: mapContainer,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      center: [4.44, 51.915],
-      zoom: 13,
+      center: [4.47, 51.915],
+      zoom: 12.5,
       attributionControl: false,
       fadeDuration: 0, // <--- VOEG DEZE REGEL TOE
     });
