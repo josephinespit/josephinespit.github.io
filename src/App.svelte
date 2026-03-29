@@ -21,18 +21,33 @@
   }
 
   const DOMEIN_COLORS = {
-    Werken: "#E5E5E5",
-    "Makers en Werkplaatsen": "#D4D4D4",
-    Cultuur: "#8450FF",
-    Groen: "#CDEBC5",
-    Voedsel: "#FFD6A5",
-    Circulair: "#BDB2FF",
-    Energie: "#CAFFBF",
-    Klimaat: "#A0C4FF",
-    "Zorg en Welzijn": "#FFADAD",
-    Educatie: "#FDFFB6",
-    Wonen: "#FFC6FF",
-    default: "#eeeeee",
+    Werken: "#D4D4D4", // Iets donkerder grijs gemaakt voor leesbaarheid op wit
+    "Makers en Werkplaatsen": "#A1A1A1", // Iets donkerder grijs gemaakt
+    Cultuur: "#5d69fb",
+    Groen: "#2D6A4F", // Donkerder groen voor icoon-contrast op wit
+    Voedsel: "#E76F51", // Warmer/donkerder oranje voor icoon-contrast
+    Circulair: "#6C5B7B", // Iets donkerder paars/blauw
+    Energie: "#FFB703", // Donkerder geel/oranje
+    Klimaat: "#4EA8DE", // Iets donkerder blauw
+    "Zorg en Welzijn": "#E63946", // Iets donkerder rood
+    Educatie: "#B5A900", // Donkerder okergeel
+    Wonen: "#D81B60", // Donkerder roze
+    default: "#5d69fb",
+  };
+
+  const DOMEIN_ICONS = {
+    Werken: "ph-briefcase",
+    "Makers en Werkplaatsen": "ph-hammer",
+    Cultuur: "ph-paint-brush-broad",
+    Groen: "ph-tree",
+    Voedsel: "ph-fork-knife",
+    Circulair: "ph-recycle",
+    Energie: "ph-lightning",
+    Klimaat: "ph-cloud-sun",
+    "Zorg en Welzijn": "ph-heartbeat",
+    Educatie: "ph-graduation-cap",
+    Wonen: "ph-house",
+    default: "ph-map-pin",
   };
 
   const GEBIED_COLORS = {
@@ -47,7 +62,7 @@
     "Oude Westen": "#D8C3A5",
     Schiehaven: "#8E8D8A",
     Schiemond: "#B8A2CF",
-    default: "#8450FF",
+    default: "#5d69fb",
   };
 
   let openSections = $state({ info: false, gebied: false, domein: false });
@@ -103,7 +118,7 @@
       center: [4.47, 51.915],
       zoom: 12.5,
       attributionControl: false,
-      fadeDuration: 0, // <--- VOEG DEZE REGEL TOE
+      fadeDuration: 0,
     });
 
     map.addControl(
@@ -116,29 +131,22 @@
       "bottom-right",
     );
 
-    // Update de lijnpositie als de kaart beweegt
     map.on("move", updateLine);
   }
 
-  // Functie om de simpele strakke lijn te berekenen
   function updateLine() {
     if (!selectedPlace || !map) {
       linePath = "";
       return;
     }
 
-    // 1. Zoek de positie van de actieve marker op het scherm (Punt A)
     const pos = map.project([selectedPlace.longitude, selectedPlace.latitude]);
     const startX = pos.x;
     const startY = pos.y;
 
-    // 2. Zoek de positie van de pop-up (Vast op top-right)
-    // De pop-up staat op right: 20px, top: 20px en is 300px breed.
-    // We trekken de lijn naar het midden van de linkerzijde van de pop-up.
     const endX = window.innerWidth - 300 - 20;
-    const endY = 20 + 100; // Ongeveer het midden van de linkerzijde van de pop-up
+    const endY = 20 + 100;
 
-    // 3. Teken een simpele strakke rechte lijn (M = Move To, L = Line To)
     linePath = `M ${startX} ${startY} L ${endX} ${endY}`;
   }
 
@@ -159,34 +167,34 @@
       const el = document.createElement("div");
       el.className = "air-marker";
 
-      // Kleurenlogica (ongewijzigd)
-      if (visualMode === "domein") {
-        const domeinList = place.domeinen.split(";").map((d) => d.trim());
-        const colors = domeinList.map(
-          (d) => DOMEIN_COLORS[d] || DOMEIN_COLORS.default,
-        );
-        if (colors.length === 1) el.style.background = colors[0];
-        else {
-          const pieceSize = 100 / colors.length;
-          const gradientString = colors
-            .map(
-              (color, i) =>
-                `${color} ${i * pieceSize}% ${(i + 1) * pieceSize}%`,
-            )
-            .join(", ");
-          el.style.background = `conic-gradient(${gradientString})`;
-        }
-      } else if (visualMode === "gebied") {
+      const domeinList = place.domeinen.split(";").map((d) => d.trim());
+
+      // --- NIEUW: Alle icoontjes van de domeinen verzamelen en kleuren ---
+      let iconsHtml = "";
+
+      domeinList.forEach((d) => {
+        const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
+        const iconColor =
+          visualMode === "domein"
+            ? DOMEIN_COLORS[d] || DOMEIN_COLORS.default
+            : "#1a1a1a";
+        iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
+      });
+
+      el.innerHTML = iconsHtml;
+
+      // De bolletjes zijn nu ALTIJD wit (of meekleurend met gebied)
+      if (visualMode === "gebied") {
         const gebiedKey = place.gebied || "default";
         el.style.background = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
+        // Bij gebiedsweergave maken we de iconen binnenin even wit voor het contrast
+        el.querySelectorAll("i").forEach((i) => (i.style.color = "#ffffff"));
       } else {
-        el.style.background = "#8450FF";
+        el.style.background = "#ffffff";
       }
 
-      // Klik event voor de nieuwe custom pop-up
-      // Klik event voor de marker
       el.addEventListener("click", (e) => {
-        e.stopPropagation(); // Voorkom dat de kaart-klik getriggerd wordt
+        e.stopPropagation();
 
         if (activeMarkerElement)
           activeMarkerElement.classList.remove("active-glow");
@@ -195,17 +203,12 @@
         activeMarkerElement = el;
         el.classList.add("active-glow");
 
-        // --- NIEUW: Centreer de kaart op de aangeklikte marker ---
         map.flyTo({
           center: [place.longitude, place.latitude],
-          essential: true, // Zorgt ervoor dat de animatie ook werkt bij gebruikers met 'reduced motion' instellingen
-          speed: 0.1, // Snelheid van de animatie (lager is langzamer)
-          curve: 0, // De curve van de vliegbeweging
+          essential: true,
+          speed: 0.1,
+          curve: 0,
         });
-
-        // Kleine timeout om te zorgen dat de lijn pas berekend wordt
-        // als de kaart op zijn nieuwe plek staat
-        // setTimeout(updateLine, 10);
       });
 
       const m = new maplibregl.Marker({ element: el })
@@ -268,12 +271,12 @@
                 onchange={() =>
                   (selectedDomeinen = toggleFilter(selectedDomeinen, domein))}
               />
+              <i
+                class="ph {DOMEIN_ICONS[domein] ||
+                  DOMEIN_ICONS.default} sidebar-icon"
+                style="color: {DOMEIN_COLORS[domein] || DOMEIN_COLORS.default}"
+              ></i>
               <span class="filter-text">{domein}</span>
-              <span
-                class="color-swatch"
-                style="background-color: {DOMEIN_COLORS[domein] ||
-                  DOMEIN_COLORS.default}"
-              ></span>
             </label>
           {/each}
         </div>
@@ -423,7 +426,7 @@
     font-weight: 900;
     font-size: 1.4rem;
     letter-spacing: -0.5px;
-    color: #8450ff;
+    color: #5d69fb;
     background-color: #fdfaf0; /* Matcht nu met de paarse balk van de popup! */
     text-align: center;
   }
@@ -453,7 +456,7 @@
     text-transform: uppercase;
     font-size: 0.8rem;
     letter-spacing: 0.05rem;
-    color: #8450ff;
+    color: #5d69fb;
     text-align: left;
   }
 
@@ -510,12 +513,12 @@
   }
 
   .stats strong {
-    color: #8450ff;
+    color: #5d69fb;
     font-size: 0.85rem;
   }
 
   input[type="checkbox"] {
-    accent-color: #8450ff;
+    accent-color: #5d69fb;
   }
 
   .visual-toggle-container {
@@ -569,7 +572,7 @@
   }
 
   input:checked + .slider {
-    background-color: #8450ff;
+    background-color: #5d69fb;
   }
 
   input:checked + .slider:before {
@@ -621,7 +624,7 @@
     justify-content: space-between;
     align-items: center; /* Centreert de knop verticaal ten opzichte van de balk */
     padding: 12px 16px;
-    background-color: #8450ff; /* AIR Paars */
+    background-color: #5d69fb; /* AIR Paars */
     gap: 12px;
 
     /* Vaste hoogte: 2.8rem voor de tekst + 24px padding = ~68px hoog */
@@ -653,7 +656,7 @@
     font-size: 22px; /* Iets groter kruisje vult het blokje mooier op */
     font-family: Arial, sans-serif; /* Arial heeft een heel symmetrisch kruisje */
     cursor: pointer;
-    color: #8450ff; /* Paars kruisje */
+    color: #5d69fb; /* Paars kruisje */
     width: 28px;
     height: 28px;
 
@@ -738,7 +741,7 @@
     border: 1px solid rgba(0, 0, 0, 0.1);
     text-transform: uppercase;
     font-weight: bold;
-    color: #333;
+    color: #fdfaf0;
     display: inline-block;
     border-radius: 5px;
   }
@@ -754,41 +757,57 @@
     font-size: 11px;
     color: #333;
     text-decoration: none;
-    border-bottom: 1px solid #8450ff;
+    border-bottom: 1px solid #5d69fb;
     padding-bottom: 2px;
     transition: all 0.2s;
   }
   .popup-link:hover {
-    color: #8450ff;
+    color: #5d69fb;
     background: #fdfaf0;
   }
 
   /* MARKERS EN GLOW EFFECT */
   :global(.air-marker) {
-    width: 16px;
-    height: 16px;
-    border: 2px solid white;
-    border-radius: 50%;
+    min-width: 26px; /* Basisbreedte voor 1 icoon */
+    height: 26px;
+    border: 2px solid #5d69fb; /* Paarse omlijning maakt het witte rondje knallend */
+    border-radius: 13px; /* Zorgt dat het een pilvorm wordt als er meer iconen bijkomen */
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-    /* transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); */
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    background: #ffffff;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px; /* Ruimte tussen icoontjes */
+    padding: 0 4px;
+    box-sizing: border-box;
+  }
+
+  :global(.air-marker i) {
+    font-size: 14px;
+    line-height: 1;
   }
 
   :global(.air-marker:hover) {
-    width: 22px;
-    height: 22px;
+    transform: scale(1.15); /* Subtiel groter maken ipv harde px-verandering */
     z-index: 1000;
   }
 
-  /* De actieve grotere marker met gloeiende rand */
+  /* Actieve marker */
   :global(.air-marker.active-glow) {
-    width: 24px !important;
-    height: 24px !important;
     z-index: 1001;
-    border-color: #fff;
+    border-color: #5d69fb;
     box-shadow:
-      0 0 0 4px rgba(132, 80, 255, 0.4),
-      0 0 15px 8px rgba(132, 80, 255, 0.2),
-      0 2px 6px rgba(0, 0, 0, 0.3);
+      0 0 0 4px rgba(132, 80, 255, 0.3),
+      0 0 15px 8px rgba(132, 80, 255, 0.15),
+      0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  /* NIEUW: Icoontje in de sidebar */
+  :global(.sidebar-icon) {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
   }
 </style>
