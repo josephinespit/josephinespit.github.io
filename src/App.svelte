@@ -496,16 +496,16 @@
   }
 
   :global(.maplibregl-popup-content) {
-    padding: 0; /* We handle padding inside our div */
-    border-radius: 0;
+    padding: 0;
+    border-radius: 5px;
     border-top: 6px solid #8450ff;
-    box-shadow: 10px 10px 0px rgba(132, 80, 255, 0.1); /* Architectural shadow */
+    box-shadow: 5px 5px 0px rgba(132, 80, 255, 0.1);
     font-family: "Helvetica", Arial, sans-serif;
   }
 
   :global(.air-popup) {
     padding: 16px;
-    max-width: 220px;
+    width: 200px;
     text-align: left;
   }
 
@@ -593,7 +593,7 @@
     font-weight: bold;
     color: #333;
     display: inline-block;
-    border-radius: 0; /* Sharp corners */
+    border-radius: 5px; /* Sharp corners */
   }
 
   :global(.popup-tags) {
@@ -618,7 +618,7 @@
   }
 
   :global(.air-marker) {
-    width: 16px; /* Slightly larger for better slice visibility */
+    width: 16px;
     height: 16px;
     border: 2px solid white;
     border-radius: 50%;
