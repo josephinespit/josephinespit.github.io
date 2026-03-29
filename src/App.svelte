@@ -429,7 +429,7 @@
   }
 
   .accordion {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid #e0ddd5;
     background: #fdfaf0;
     transition: background-color 0.2s ease;
   }
@@ -451,7 +451,7 @@
     font-family: inherit;
     font-weight: 800;
     text-transform: uppercase;
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     letter-spacing: 0.05rem;
     color: #8450ff;
     text-align: left;
