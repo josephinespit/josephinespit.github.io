@@ -11,12 +11,13 @@
   let markers = [];
   let visualMode = $state("default");
 
+  // Nieuwe state voor actieve pop-up en lijn
+  let selectedPlace = $state(null);
+  let activeMarkerElement = $state(null);
+  let linePath = $state("");
+
   function handleVisualToggle(mode) {
-    if (visualMode === mode) {
-      visualMode = "default";
-    } else {
-      visualMode = mode;
-    }
+    visualMode = visualMode === mode ? "default" : mode;
   }
 
   const DOMEIN_COLORS = {
@@ -35,35 +36,28 @@
   };
 
   const GEBIED_COLORS = {
-    "Bospolder-Tussendijken": "#D68C7A", // Zacht terracotta/baksteen
-    "Keilekwartier/M4H": "#7D9BB2", // Staalblauw
-    Delfshaven: "#9DB5A2", // Vergrijsd groen
-    Keilewerf: "#4A707A", // Diep oceaanblauw
-    Midelland: "#E2B07E", // Warm oker
-    "Nieuw-Mathenesse": "#5E7D91", // Industrieel grijsblauw
-    "Nieuwe Westen": "#C78D9B", // Oudroze
-    "Oud Mathenesse": "#A3A380", // Olijfgrijs
-    "Oude Westen": "#D8C3A5", // Zand/Beige
-    Schiehaven: "#8E8D8A", // Beton-metallic
-    Schiemond: "#B8A2CF", // Muted lavendel
+    "Bospolder-Tussendijken": "#D68C7A",
+    "Keilekwartier/M4H": "#7D9BB2",
+    Delfshaven: "#9DB5A2",
+    Keilewerf: "#4A707A",
+    Midelland: "#E2B07E",
+    "Nieuw-Mathenesse": "#5E7D91",
+    "Nieuwe Westen": "#C78D9B",
+    "Oud Mathenesse": "#A3A380",
+    "Oude Westen": "#D8C3A5",
+    Schiehaven: "#8E8D8A",
+    Schiemond: "#B8A2CF",
     default: "#8450FF",
   };
 
-  let openSections = $state({
-    info: true,
-    gebied: false,
-    domein: true,
-  });
-
+  let openSections = $state({ info: true, gebied: false, domein: true });
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
 
-  // Filter States
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
 
-  // Get unique values for the UI
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
   );
@@ -77,7 +71,6 @@
       .sort(),
   );
 
-  // Filtered List
   let filteredPlaces = $derived(
     allPlaces.filter((p) => {
       const matchesGebied =
@@ -90,7 +83,6 @@
     }),
   );
 
-  // --- LOGIC ---
   onMount(async () => {
     const response = await fetch("initiatieven.csv");
     const csvString = await response.text();
@@ -113,22 +105,60 @@
       attributionControl: false,
     });
 
-    // Add Attribution to the bottom LEFT instead
     map.addControl(
       new maplibregl.AttributionControl({ compact: true }),
       "bottom-left",
     );
-
     map.addControl(new maplibregl.ScaleControl(), "bottom-right");
-
-    // Add Navigation: showZoom: true, showCompass: false
     map.addControl(
-      new maplibregl.NavigationControl({
-        showCompass: false,
-        showZoom: true,
-      }),
+      new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
       "bottom-right",
     );
+
+    // Update de lijnpositie als de kaart beweegt
+    map.on("move", updateLine);
+  }
+
+  // Functie om de dynamische bezier curve te berekenen
+  function updateLine() {
+    if (!selectedPlace || !map) {
+      linePath = "";
+      return;
+    }
+
+    // 1. Zoek de positie van de actieve marker op het scherm
+    const pos = map.project([selectedPlace.longitude, selectedPlace.latitude]);
+    const startX = pos.x;
+    const startY = pos.y;
+
+    // 2. Zoek de positie van de pop-up (vast op top-right)
+    // De pop-up staat op right: 20px, top: 20px en is 240px breed
+    const endX = window.innerWidth - 300 - 20;
+    const endY = 20 + 80; // Ongeveer het midden van de linkerzijde van de pop-up
+
+    // 3. Teken een organische curve (dik bij popup, dun bij marker)
+    // We tekenen een gesloten vorm (pad heen, boogje, pad terug) om de dikte te faken
+    const ctrl1X = startX + (endX - startX) * 0.3;
+    const ctrl1Y = startY;
+    const ctrl2X = startX + (endX - startX) * 0.7;
+    const ctrl2Y = endY;
+
+    // We bouwen een polygoon die taps toeloopt
+    linePath = `
+      M ${startX} ${startY}
+      C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY - 6}
+      L ${endX} ${endY + 6}
+      C ${ctrl2X} ${ctrl2Y}, ${ctrl1X} ${ctrl1Y}, ${startX} ${startY}
+      Z
+    `;
+  }
+
+  function closePopup() {
+    if (activeMarkerElement)
+      activeMarkerElement.classList.remove("active-glow");
+    selectedPlace = null;
+    activeMarkerElement = null;
+    linePath = "";
   }
 
   $effect(() => {
@@ -140,17 +170,14 @@
       const el = document.createElement("div");
       el.className = "air-marker";
 
-      // --- DYNAMIC COLOR LOGIC ---
+      // Kleurenlogica (ongewijzigd)
       if (visualMode === "domein") {
-        // Pizza Slice Logic
         const domeinList = place.domeinen.split(";").map((d) => d.trim());
         const colors = domeinList.map(
           (d) => DOMEIN_COLORS[d] || DOMEIN_COLORS.default,
         );
-
-        if (colors.length === 1) {
-          el.style.background = colors[0];
-        } else {
+        if (colors.length === 1) el.style.background = colors[0];
+        else {
           const pieceSize = 100 / colors.length;
           const gradientString = colors
             .map(
@@ -161,56 +188,29 @@
           el.style.background = `conic-gradient(${gradientString})`;
         }
       } else if (visualMode === "gebied") {
-        // Single color based on Gebied
         const gebiedKey = place.gebied || "default";
         el.style.background = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
       } else {
-        // Default Mode: All markers AIR Purple
         el.style.background = "#8450FF";
       }
 
+      // Klik event voor de nieuwe custom pop-up
+      el.addEventListener("click", (e) => {
+        e.stopPropagation(); // Voorkom dat de map klik getriggerd wordt
+
+        if (activeMarkerElement)
+          activeMarkerElement.classList.remove("active-glow");
+
+        selectedPlace = place;
+        activeMarkerElement = el;
+        el.classList.add("active-glow");
+
+        // Kleine timeout om te zorgen dat de DOM is bijgewerkt
+        setTimeout(updateLine, 10);
+      });
+
       const m = new maplibregl.Marker({ element: el })
         .setLngLat([place.longitude, place.latitude])
-        .setPopup(
-          new maplibregl.Popup({
-            offset: 25,
-            closeButton: false,
-            className: "air-popup-animation",
-          }).setHTML(`
-            <div class="air-popup">
-              <h3 class="popup-title">${place.name}</h3>
-              <div class="popup-info-row"><span class="label">Gebied:</span> ${place.gebied || "Rotterdam"}</div>
-              <div class="popup-info-row">
-                <span class="label">Domein:</span>
-                <div class="popup-tags">
-                  ${place.domeinen
-                    .split(";")
-                    .map((d) => {
-                      const color =
-                        DOMEIN_COLORS[d.trim()] || DOMEIN_COLORS.default;
-                      return `<span class="p-tag" style="background-color: ${color}">${d.trim()}</span>`;
-                    })
-                    .join("")}
-                </div>
-              </div>
-
-              <div class="popup-info-row">
-                <span class="label">M4H Principes:</span>
-                <div class="popup-tags">
-                  ${place.m4h_principes
-                    .split(";")
-                    .map((d) => {
-                      const color =
-                        DOMEIN_COLORS[d.trim()] || DOMEIN_COLORS.default;
-                      return `<span class="p-tag" style="background-color: ${color}">${d.trim()}</span>`;
-                    })
-                    .join("")}
-                </div>
-              </div>
-              ${place.website ? `<div class="popup-footer"><a href="${place.website}" target="_blank" class="popup-link">Website ↗</a></div>` : ""}
-            </div>
-          `),
-        )
         .addTo(map);
       markers.push(m);
     });
@@ -222,8 +222,12 @@
   }
 </script>
 
-<div class="layout">
-  <aside class="sidebar">
+<div class="layout" onclick={closePopup} role="presentation">
+  <aside
+    class="sidebar"
+    onclick={(e) => e.stopPropagation()}
+    role="presentation"
+  >
     <div class="brand">Initiatievenkaart</div>
 
     <div class="accordion">
@@ -320,21 +324,80 @@
       <strong>{filteredPlaces.length}</strong> initiatieven getoond
     </div>
   </aside>
-  <div class="map-container" bind:this={mapContainer}></div>
+
+  <div class="map-container" bind:this={mapContainer}>
+    {#if selectedPlace}
+      <svg class="line-overlay">
+        <path d={linePath} fill="#8450ff" opacity="0.6" />
+      </svg>
+    {/if}
+
+    {#if selectedPlace}
+      <div
+        class="fixed-air-popup"
+        onclick={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <button class="close-btn" onclick={closePopup}>×</button>
+        <div class="air-popup">
+          <h3 class="popup-title">{selectedPlace.name}</h3>
+          <div class="popup-info-row">
+            <span class="label">Gebied:</span>
+            {selectedPlace.gebied || "Rotterdam"}
+          </div>
+          <div class="popup-info-row">
+            <span class="label">Domein:</span>
+            <div class="popup-tags">
+              {#each selectedPlace.domeinen.split(";") as d}
+                <span
+                  class="p-tag"
+                  style="background-color: {DOMEIN_COLORS[d.trim()] ||
+                    DOMEIN_COLORS.default}"
+                >
+                  {d.trim()}
+                </span>
+              {/each}
+            </div>
+          </div>
+          <div class="popup-info-row">
+            <span class="label">M4H Principes:</span>
+            <div class="popup-tags">
+              {#each selectedPlace.m4h_principes.split(";") as d}
+                <span
+                  class="p-tag"
+                  style="background-color: {DOMEIN_COLORS[d.trim()] ||
+                    DOMEIN_COLORS.default}"
+                >
+                  {d.trim()}
+                </span>
+              {/each}
+            </div>
+          </div>
+          {#if selectedPlace.website}
+            <div class="popup-footer">
+              <a href={selectedPlace.website} target="_blank" class="popup-link"
+                >Website ↗</a
+              >
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
   :global(#app) {
     margin: 0 !important;
     padding: 0 !important;
-    max-width: none !important; /* Vite often limits this to 1280px */
+    max-width: none !important;
   }
 
   .layout {
     display: flex;
     width: 100vw;
     height: 100vh;
-    position: fixed; /* Fixed is safer than flex for edge-to-edge */
+    position: fixed;
     top: 0;
     left: 0;
   }
@@ -347,8 +410,6 @@
     display: flex;
     flex-direction: column;
     z-index: 10;
-
-    /* FIX: Scrollbar aan de buitenkant zonder verspringen */
     overflow-y: auto;
     scrollbar-gutter: stable;
   }
@@ -385,22 +446,8 @@
   .accordion-header:hover {
     background: #8450ff10;
   }
-
   .accordion-content {
     padding: 0 20px 20px 20px;
-    max-height: none;
-  }
-
-  .accordion-content p {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 8px 0;
-    font-size: 0.8rem;
-    color: #555;
-    cursor: pointer;
-    justify-content: flex-start;
-    text-align: left;
   }
 
   .filter-item {
@@ -411,19 +458,16 @@
     font-size: 0.8rem;
     color: #555;
     cursor: pointer;
-    justify-content: flex-start;
-    text-align: left;
   }
 
   .stats {
-    margin-top: auto; /* Pushes to bottom */
+    margin-top: auto;
     padding: 20px;
     font-size: 0.75rem;
     color: #888;
     background: #fdfaf0;
   }
 
-  /* Custom Checkbox Color */
   input[type="checkbox"] {
     accent-color: #8450ff;
   }
@@ -433,7 +477,6 @@
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
-    margin-bottom: 5px;
   }
 
   .toggle-text {
@@ -480,10 +523,10 @@
   input:checked + .slider {
     background-color: #8450ff;
   }
-
   input:checked + .slider:before {
     transform: translateX(14px);
   }
+
   .separator {
     border: 0;
     border-top: 1px solid #eee;
@@ -493,32 +536,45 @@
   .map-container {
     flex-grow: 1;
     height: 100%;
+    position: relative;
   }
 
-  :global(.maplibregl-popup-content) {
-    padding: 0;
+  /* GEFIXEERDE POP-UP RECHTSBOVEN */
+  .fixed-air-popup {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 300px; /* Vaste grootte */
+    background: white;
     border-radius: 5px;
     border-top: 6px solid #8450ff;
-    box-shadow: 5px 5px 0px rgba(132, 80, 255, 0.1);
+    box-shadow:
+      0 10px 25px rgba(0, 0, 0, 0.1),
+      5px 5px 0px rgba(132, 80, 255, 0.1);
+    z-index: 2000;
+    animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1);
     font-family: "Helvetica", Arial, sans-serif;
   }
 
-  :global(.air-popup) {
+  .close-btn {
+    position: absolute;
+    top: 5px;
+    right: 10px;
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: #888;
+  }
+  .close-btn:hover {
+    color: #333;
+  }
+
+  .air-popup {
     padding: 16px;
-    width: 200px;
-    text-align: left;
   }
 
-  :global(.popup-header) {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: #8450ff;
-    font-weight: bold;
-    margin-bottom: 8px;
-  }
-
-  :global(.popup-title) {
+  .popup-title {
     margin: 0 0 15px 0;
     font-size: 1.2rem;
     font-weight: 900;
@@ -528,13 +584,13 @@
     padding-bottom: 10px;
   }
 
-  :global(.popup-info-row) {
+  .popup-info-row {
     font-size: 0.8rem;
     margin-bottom: 10px;
     color: #555;
   }
 
-  :global(.popup-info-row .label) {
+  .popup-info-row .label {
     font-weight: bold;
     color: #888;
     text-transform: uppercase;
@@ -543,33 +599,35 @@
     margin-bottom: 3px;
   }
 
-  :global(.popup-footer) {
+  .popup-footer {
     margin-top: 15px;
     padding-top: 10px;
     border-top: 1px dotted #ccc;
   }
 
-  :global(.air-popup-animation .maplibregl-popup-content) {
-    animation: popup-fade-in 0.3s ease-out;
-  }
-
-  @keyframes popup-fade-in {
+  @keyframes popup-slide-in {
     from {
       opacity: 0;
-      transform: translateY(10px);
+      transform: translateX(20px);
     }
     to {
       opacity: 1;
-      transform: translateY(0);
+      transform: translateX(0);
     }
   }
 
-  :global(.maplibregl-ctrl-bottom-right) {
-    right: 20px !important;
-    bottom: 20px !important;
+  /* SVG OVERLAY VOOR DE LIJN */
+  .line-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Klikken gaan door de SVG heen naar de map */
+    z-index: 1500;
   }
 
-  /* Sidebar color square */
+  /* SIDEBAR KLEUREN */
   .color-swatch {
     width: 12px;
     height: 12px;
@@ -577,13 +635,12 @@
     margin-left: auto;
     border: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .filter-text {
     flex-grow: 1;
   }
 
-  /* Popup rectangles */
-  :global(.p-tag) {
+  /* TAGS EN LINKS */
+  .p-tag {
     font-size: 9px;
     padding: 3px 6px;
     margin-right: 4px;
@@ -593,16 +650,16 @@
     font-weight: bold;
     color: #333;
     display: inline-block;
-    border-radius: 5px; /* Sharp corners */
+    border-radius: 5px;
   }
 
-  :global(.popup-tags) {
+  .popup-tags {
     display: flex;
     flex-wrap: wrap;
     margin-top: 8px;
   }
 
-  :global(.popup-link) {
+  .popup-link {
     display: inline-block;
     font-size: 11px;
     color: #333;
@@ -611,12 +668,12 @@
     padding-bottom: 2px;
     transition: all 0.2s;
   }
-
-  :global(.popup-link:hover) {
+  .popup-link:hover {
     color: #8450ff;
     background: #fdfaf0;
   }
 
+  /* MARKERS EN GLOW EFFECT */
   :global(.air-marker) {
     width: 16px;
     height: 16px;
@@ -624,14 +681,24 @@
     border-radius: 50%;
     cursor: pointer;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   }
 
   :global(.air-marker:hover) {
     width: 22px;
     height: 22px;
     z-index: 1000;
-    border-color: #fff; /* Keep border white */
-    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    will-change: transform;
+  }
+
+  /* De actieve grotere marker met gloeiende rand */
+  :global(.air-marker.active-glow) {
+    width: 26px !important;
+    height: 26px !important;
+    z-index: 1001;
+    border-color: #fff;
+    box-shadow:
+      0 0 0 4px rgba(132, 80, 255, 0.4),
+      0 0 15px 8px rgba(132, 80, 255, 0.2),
+      0 2px 6px rgba(0, 0, 0, 0.3);
   }
 </style>
