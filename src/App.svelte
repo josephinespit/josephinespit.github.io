@@ -93,7 +93,8 @@
       const placeDomeinen = p.domeinen.split(";").map((d) => d.trim());
       const matchesDomein =
         selectedDomeinen.length === 0 ||
-        selectedDomeinen.some((d) => placeDomeinen.includes(d));
+        // Require that the place contains ALL selected domeinen (AND semantics)
+        selectedDomeinen.every((d) => placeDomeinen.includes(d));
       return matchesGebied && matchesDomein;
     }),
   );
@@ -251,7 +252,7 @@
       </button>
       {#if openSections.domein}
         <div class="accordion-content">
-          <div class="visual-toggle-container">
+          <!-- <div class="visual-toggle-container">
             <span class="toggle-text">Toon kleuren per domein</span>
             <label class="switch">
               <input
@@ -262,7 +263,7 @@
               <span class="slider"></span>
             </label>
           </div>
-          <hr class="separator" />
+          <hr class="separator" /> -->
           {#each uniqueDomeinen as domein}
             <label class="filter-item">
               <input
@@ -271,12 +272,13 @@
                 onchange={() =>
                   (selectedDomeinen = toggleFilter(selectedDomeinen, domein))}
               />
+
+              <span class="filter-text">{domein}</span>
               <i
                 class="ph {DOMEIN_ICONS[domein] ||
                   DOMEIN_ICONS.default} sidebar-icon"
                 style="color: {DOMEIN_COLORS[domein] || DOMEIN_COLORS.default}"
               ></i>
-              <span class="filter-text">{domein}</span>
             </label>
           {/each}
         </div>
@@ -770,10 +772,10 @@
   :global(.air-marker) {
     min-width: 26px; /* Basisbreedte voor 1 icoon */
     height: 26px;
-    border: 2px solid #5d69fb; /* Paarse omlijning maakt het witte rondje knallend */
+    border: 1px solid #4e56b0; /* Paarse omlijning maakt het witte rondje knallend */
     border-radius: 13px; /* Zorgt dat het een pilvorm wordt als er meer iconen bijkomen */
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
     background: #ffffff;
 
     display: flex;
@@ -797,9 +799,9 @@
   /* Actieve marker */
   :global(.air-marker.active-glow) {
     z-index: 1001;
-    border-color: #5d69fb;
+    border: 1.5px solid #5d69fb;
     box-shadow:
-      0 0 0 4px rgba(132, 80, 255, 0.3),
+      0 0 0 3px #5d69fb33,
       0 0 15px 8px rgba(132, 80, 255, 0.15),
       0 2px 6px rgba(0, 0, 0, 0.2);
   }
