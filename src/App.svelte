@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
+  import jsPDF from "jspdf";
+  import html2canvas from "html2canvas";
   import "maplibre-gl/dist/maplibre-gl.css";
 
   // --- STATE ---
@@ -65,7 +67,15 @@
     default: "#5d69fb",
   };
 
-  let openSections = $state({ info: false, gebied: false, domein: false });
+  // Bounding box for Rotterdam: [west, south, east, north]
+  const ROTTERDAM_BBOX = [3.9, 51.8, 4.8, 52.0];
+
+  let openSections = $state({
+    info: false,
+    gebied: false,
+    domein: false,
+    export: false,
+  });
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
@@ -223,6 +233,55 @@
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
   }
+
+  async function exportBasemapToPDF() {
+    // Create a temporary container for the export map
+    const tempContainer = document.createElement("div");
+    tempContainer.style.width = "800px";
+    tempContainer.style.height = "600px";
+    tempContainer.style.position = "absolute";
+    tempContainer.style.left = "-9999px";
+    document.body.appendChild(tempContainer);
+
+    // Create a new map instance with the basemap only
+    const exportMap = new maplibregl.Map({
+      container: tempContainer,
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      bounds: ROTTERDAM_BBOX,
+      attributionControl: false,
+      fadeDuration: 0,
+    });
+
+    // Wait for the map to load
+    await new Promise((resolve) => {
+      exportMap.on("load", resolve);
+    });
+
+    // Use html2canvas to capture the map
+    const canvas = await html2canvas(tempContainer, {
+      useCORS: true,
+      allowTaint: false,
+      width: 800,
+      height: 600,
+    });
+
+    // Create PDF
+    const pdf = new jsPDF({
+      orientation: "landscape",
+      unit: "px",
+      format: [800, 600],
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    pdf.addImage(imgData, "PNG", 0, 0, 800, 600);
+
+    // Download the PDF
+    pdf.save("rotterdam-basemap.pdf");
+
+    // Clean up
+    exportMap.remove();
+    document.body.removeChild(tempContainer);
+  }
 </script>
 
 <div class="layout" onclick={closePopup} role="presentation">
@@ -320,6 +379,21 @@
               ></span>
             </label>
           {/each}
+        </div>
+      {/if}
+    </div>
+
+    <div class="accordion">
+      <button class="accordion-header" onclick={() => toggleSection("export")}>
+        <span>Export</span>
+        <span class="icon">{openSections.export ? "−" : "+"}</span>
+      </button>
+      {#if openSections.export}
+        <div class="accordion-content">
+          <button onclick={exportBasemapToPDF} class="export-btn">
+            Export Basemap to PDF
+          </button>
+          <p>Exports the Rotterdam basemap (without markers) to a PDF file.</p>
         </div>
       {/if}
     </div>
@@ -494,6 +568,22 @@
     font-weight: 500;
     cursor: pointer;
     text-align: left;
+  }
+
+  .export-btn {
+    background-color: #5d69fb;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .export-btn:hover {
+    background-color: #4a5cfb;
   }
 
   /* Subtiele hiërarchie-labeling binnen de sidebar content */
