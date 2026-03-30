@@ -2,8 +2,6 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
-  import jsPDF from "jspdf";
-  import html2canvas from "html2canvas";
   import "maplibre-gl/dist/maplibre-gl.css";
 
   // --- STATE ---
@@ -247,7 +245,7 @@
     const exportMap = new maplibregl.Map({
       container: tempContainer,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      bounds: ROTTERDAM_BBOX,
+      bounds: map.getBounds(),
       attributionControl: false,
       fadeDuration: 0,
     });
@@ -257,26 +255,33 @@
       exportMap.on("load", resolve);
     });
 
-    // Use html2canvas to capture the map
-    const canvas = await html2canvas(tempContainer, {
-      useCORS: true,
-      allowTaint: false,
-      width: 800,
-      height: 600,
-    });
+    // Create SVG with the map as image
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "800");
+    svg.setAttribute("height", "600");
+    svg.setAttribute("viewBox", "0 0 800 600");
 
-    // Create PDF
-    const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "px",
-      format: [800, 600],
-    });
+    const image = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "image",
+    );
+    image.setAttribute("width", "800");
+    image.setAttribute("height", "600");
+    image.setAttribute("href", exportMap.getCanvas().toDataURL());
 
-    const imgData = canvas.toDataURL("image/png");
-    pdf.addImage(imgData, "PNG", 0, 0, 800, 600);
+    svg.appendChild(image);
 
-    // Download the PDF
-    pdf.save("rotterdam-basemap.pdf");
+    // Serialize and download
+    const svgString = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([svgString], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "map-basemap.svg";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 
     // Clean up
     exportMap.remove();
@@ -391,9 +396,12 @@
       {#if openSections.export}
         <div class="accordion-content">
           <button onclick={exportBasemapToPDF} class="export-btn">
-            Export Basemap to PDF
+            Export Basemap to SVG
           </button>
-          <p>Exports the Rotterdam basemap (without markers) to a PDF file.</p>
+          <p>
+            Exports the current map view basemap (without markers) to an SVG
+            file.
+          </p>
         </div>
       {/if}
     </div>

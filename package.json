@@ -23,8 +23,6 @@
     "@allmaps/maplibre": "^1.0.0-beta.42",
     "@watergis/maplibre-gl-export": "^4.1.2",
     "d3-geo": "^3.1.1",
-    "html2canvas": "^1.4.1",
-    "jspdf": "^4.2.1",
     "maplibre-gl": "^5.19.0",
     "papaparse": "^5.5.3",
     "topojson-client": "^3.1.0"
