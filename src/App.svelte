@@ -50,18 +50,18 @@
   };
 
   const GEBIED_COLORS = {
-    "Bospolder-Tussendijken": "#D68C7A",
-    "Keilekwartier/M4H": "#7D9BB2",
-    Delfshaven: "#9DB5A2",
-    Keilewerf: "#4A707A",
-    Midelland: "#E2B07E",
-    "Nieuw-Mathenesse": "#5E7D91",
-    "Nieuwe Westen": "#C78D9B",
-    "Oud Mathenesse": "#A3A380",
-    "Oude Westen": "#D8C3A5",
-    Schiehaven: "#8E8D8A",
-    Schiemond: "#B8A2CF",
-    default: "#5d69fb",
+    "Bospolder-Tussendijken": "#F3B1A5", // Soft Terra/Rose
+    "Keilekwartier/M4H": "#A2C3DB", // Dusty Sky Blue
+    Delfshaven: "#B9D4B3", // Sage Green
+    Keilewerf: "#8EB8C2", // Muted Teal
+    Midelland: "#F6D6AD", // Warm Apricot
+    "Nieuw-Mathenesse": "#A7BCC9", // Cool Steel
+    "Nieuwe Westen": "#DBB1BC", // Antique Mauve
+    "Oud Mathenesse": "#C8CDA9", // Pale Olive
+    "Oude Westen": "#EAD9C1", // Sandstone
+    Schiehaven: "#B6B6B2", // Ash Grey
+    Schiemond: "#C9BCE2", // Pale Lavender
+    default: "#C1C8FF", // Pastel Brand Purple
   };
 
   let openSections = $state({ info: false, gebied: false, domein: false });
@@ -755,7 +755,7 @@
   :global(.air-marker) {
     min-width: 26px; /* Basisbreedte voor 1 icoon */
     height: 26px;
-    border: 1px solid #4e56b0; /* Paarse omlijning maakt het witte rondje knallend */
+    border: 2px solid #737ac6; /* Paarse omlijning maakt het witte rondje knallend */
     border-radius: 13px; /* Zorgt dat het een pilvorm wordt als er meer iconen bijkomen */
     cursor: pointer;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
@@ -781,7 +781,7 @@
   /* Actieve marker */
   :global(.air-marker.active-glow) {
     z-index: 1001;
-    border: 1.5px solid #5d69fb;
+    border: 2.5px solid #5d69fb;
     box-shadow:
       0 0 0 3px #5d69fb33,
       0 0 15px 8px rgba(132, 80, 255, 0.15),
