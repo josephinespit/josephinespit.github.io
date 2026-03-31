@@ -184,19 +184,22 @@
         activeMarkerElement = el;
         el.classList.add("active-glow");
         const isMobile = window.innerWidth <= 900;
-        const targetLongitude = isMobile
-          ? place.longitude
-          : place.longitude + 0.02;
 
-        const targetlatitude = isMobile
-          ? place.latitude + 0.005
-          : place.latitude + 0.003;
+        const sidebarWidth = 280;
+        const popupWidth = 600;
+
+        // Only apply horizontal offset on desktop
+        const offsetX = isMobile ? 0 : (sidebarWidth - popupWidth) / 2;
+
+        // Optional: small vertical tweak for mobile (since popup is on top)
+        const offsetY = isMobile ? -5 : 0;
 
         map.flyTo({
-          center: [targetLongitude, targetlatitude],
+          center: [place.longitude, place.latitude],
+          offset: [offsetX, offsetY],
           essential: true,
-          speed: 0.1,
-          curve: 0,
+          speed: 0.8,
+          curve: 1.2,
         });
       });
 
