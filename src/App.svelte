@@ -153,25 +153,27 @@
       const el = document.createElement("div");
       el.className = "air-marker";
       const domeinList = place.domeinen.split(";").map((d) => d.trim());
-      let iconsHtml = "";
 
+      // --- ALWAYS USE DOMEIN COLORS FOR ICONS ---
+      let iconsHtml = "";
       domeinList.forEach((d) => {
         const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
-        const iconColor =
-          visualMode === "domein"
-            ? DOMEIN_COLORS[d] || DOMEIN_COLORS.default
-            : "#1a1a1a";
+        const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
         iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
       });
-
       el.innerHTML = iconsHtml;
 
+      // --- HANDLE THE BORDER COLOR BASED ON MODE ---
       if (visualMode === "gebied") {
         const gebiedKey = place.gebied || "default";
-        el.style.background = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
-        el.querySelectorAll("i").forEach((i) => (i.style.color = "#ffffff"));
+        const color = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
+        el.style.borderColor = color;
+        // Optional: slight background tint to match the pastel border
+        el.style.backgroundColor = "#ffffff";
       } else {
-        el.style.background = "#ffffff";
+        // Default purple-ish border from your original design
+        el.style.borderColor = "#737ac6";
+        el.style.backgroundColor = "#ffffff";
       }
 
       el.addEventListener("click", (e) => {
@@ -181,8 +183,18 @@
         selectedPlace = place;
         activeMarkerElement = el;
         el.classList.add("active-glow");
+        const isMobile = window.innerWidth <= 900;
+        const targetLongitude = isMobile
+          ? place.longitude
+          : place.longitude + 0.02;
+
+        const targetlatitude = isMobile
+          ? place.latitude + 0.005
+          : place.latitude + 0.003;
+
         map.flyTo({
-          center: [place.longitude, place.latitude],
+          center: [targetLongitude, targetlatitude],
+          essential: true,
           speed: 0.1,
           curve: 0,
         });
