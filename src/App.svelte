@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
+  import { basemapStyle } from "./lib/basemap/index.js";
   import "maplibre-gl/dist/maplibre-gl.css";
 
   // --- STATE ---

@@ -3,6 +3,7 @@ import mlcontour from 'maplibre-contour'
 import { Map } from 'maplibre-gl'
 import { StyleSpecification } from '@maplibre/maplibre-gl-style-spec'
 import { ALLMAPS_FLAVOR, TERRAIN_COLORS } from './colors.js'
+import { WHITE } from '@protomaps/basemaps'
 
 export function basemapStyle(
   lang: string,
@@ -10,7 +11,7 @@ export function basemapStyle(
   sprite?: string,
   tileJson?: string
 ): StyleSpecification {
-  const layers = basemapLayers('protomaps', ALLMAPS_FLAVOR, { lang: lang })
+  const layers = basemapLayers('protomaps', WHITE, { lang: lang })
   // modify the buildings layer
   layers.forEach((layer) => {
     if (layer.id === 'buildings') {
