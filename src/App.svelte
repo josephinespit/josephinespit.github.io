@@ -11,7 +11,6 @@
   let markers = [];
   let visualMode = $state("domein");
 
-  // Nieuwe state voor actieve pop-up en lijn
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
   let linePath = $state("");
@@ -21,17 +20,17 @@
   }
 
   const DOMEIN_COLORS = {
-    Werken: "#D4D4D4", // Iets donkerder grijs gemaakt voor leesbaarheid op wit
-    "Makers en Werkplaatsen": "#A1A1A1", // Iets donkerder grijs gemaakt
+    Werken: "#D4D4D4",
+    "Makers en Werkplaatsen": "#A1A1A1",
     Cultuur: "#5d69fb",
-    Groen: "#2D6A4F", // Donkerder groen voor icoon-contrast op wit
-    Voedsel: "#E76F51", // Warmer/donkerder oranje voor icoon-contrast
-    Circulair: "#6C5B7B", // Iets donkerder paars/blauw
-    Energie: "#FFB703", // Donkerder geel/oranje
-    Klimaat: "#4EA8DE", // Iets donkerder blauw
-    "Zorg en Welzijn": "#E63946", // Iets donkerder rood
-    Educatie: "#B5A900", // Donkerder okergeel
-    Wonen: "#D81B60", // Donkerder roze
+    Groen: "#2D6A4F",
+    Voedsel: "#E76F51",
+    Circulair: "#6C5B7B",
+    Energie: "#FFB703",
+    Klimaat: "#4EA8DE",
+    "Zorg en Welzijn": "#E63946",
+    Educatie: "#B5A900",
+    Wonen: "#D81B60",
     default: "#5d69fb",
   };
 
@@ -72,6 +71,11 @@
 
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
+  let sidebarOpen = $state(true);
+
+  function toggleSidebar() {
+    sidebarOpen = !sidebarOpen;
+  }
 
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
@@ -93,7 +97,6 @@
       const placeDomeinen = p.domeinen.split(";").map((d) => d.trim());
       const matchesDomein =
         selectedDomeinen.length === 0 ||
-        // Require that the place contains ALL selected domeinen (AND semantics)
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
       return matchesGebied && matchesDomein;
     }),
@@ -131,24 +134,6 @@
       new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
       "bottom-right",
     );
-
-    map.on("move", updateLine);
-  }
-
-  function updateLine() {
-    if (!selectedPlace || !map) {
-      linePath = "";
-      return;
-    }
-
-    const pos = map.project([selectedPlace.longitude, selectedPlace.latitude]);
-    const startX = pos.x;
-    const startY = pos.y;
-
-    const endX = window.innerWidth - 300 - 20;
-    const endY = 20 + 100;
-
-    linePath = `M ${startX} ${startY} L ${endX} ${endY}`;
   }
 
   function closePopup() {
@@ -167,10 +152,7 @@
     filteredPlaces.forEach((place) => {
       const el = document.createElement("div");
       el.className = "air-marker";
-
       const domeinList = place.domeinen.split(";").map((d) => d.trim());
-
-      // --- NIEUW: Alle icoontjes van de domeinen verzamelen en kleuren ---
       let iconsHtml = "";
 
       domeinList.forEach((d) => {
@@ -184,11 +166,9 @@
 
       el.innerHTML = iconsHtml;
 
-      // De bolletjes zijn nu ALTIJD wit (of meekleurend met gebied)
       if (visualMode === "gebied") {
         const gebiedKey = place.gebied || "default";
         el.style.background = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
-        // Bij gebiedsweergave maken we de iconen binnenin even wit voor het contrast
         el.querySelectorAll("i").forEach((i) => (i.style.color = "#ffffff"));
       } else {
         el.style.background = "#ffffff";
@@ -196,17 +176,13 @@
 
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-
         if (activeMarkerElement)
           activeMarkerElement.classList.remove("active-glow");
-
         selectedPlace = place;
         activeMarkerElement = el;
         el.classList.add("active-glow");
-
         map.flyTo({
           center: [place.longitude, place.latitude],
-          essential: true,
           speed: 0.1,
           curve: 0,
         });
@@ -252,18 +228,6 @@
       </button>
       {#if openSections.domein}
         <div class="accordion-content">
-          <!-- <div class="visual-toggle-container">
-            <span class="toggle-text">Toon kleuren per domein</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                checked={visualMode === "domein"}
-                onchange={() => handleVisualToggle("domein")}
-              />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <hr class="separator" /> -->
           {#each uniqueDomeinen as domein}
             <label class="filter-item">
               <input
@@ -272,7 +236,6 @@
                 onchange={() =>
                   (selectedDomeinen = toggleFilter(selectedDomeinen, domein))}
               />
-
               <span class="filter-text">{domein}</span>
               <i
                 class="ph {DOMEIN_ICONS[domein] ||
@@ -365,21 +328,6 @@
               {/each}
             </div>
           </div>
-          <!-- 
-          <div class="popup-info-row">
-            <span class="label">M4H Principes</span>
-            <div class="popup-tags">
-              {#each selectedPlace.m4h_principes.split(";") as d}
-                <span
-                  class="p-tag"
-                  style="background-color: {DOMEIN_COLORS[d.trim()] ||
-                    DOMEIN_COLORS.default}"
-                >
-                  {d.trim()}
-                </span>
-              {/each}
-            </div>
-          </div> -->
 
           {#if selectedPlace.website}
             <div class="popup-footer">
@@ -413,7 +361,7 @@
   .sidebar {
     width: 280px;
     height: 100%;
-    background: #fdfaf0; /* Wit als basis voor een cleanere look */
+    background: #fdfaf0;
     border-right: 1px solid rgba(0, 0, 0, 0.05);
     display: flex;
     flex-direction: column;
@@ -421,15 +369,55 @@
     overflow-y: auto;
     scrollbar-gutter: stable;
     font-family: "Helvetica", Arial, sans-serif;
+    position: relative;
   }
 
+  /* MOBILE-SPECIFIC OVERRIDES */
+  @media (max-width: 900px) {
+    .sidebar {
+      position: fixed;
+      top: auto; /* Remove top pin */
+      bottom: 0; /* Pin to bottom */
+      left: 0;
+      width: 100%;
+      height: auto; /* Shrink to titles */
+      max-height: 70vh; /* Don't cover whole map */
+      border-right: none;
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+      z-index: 2000;
+    }
+
+    /* Hide non-accordion elements on mobile to keep it slim */
+    .brand,
+    .stats,
+    .sidebar-collapse {
+      display: none !important;
+    }
+
+    .accordion-content {
+      max-height: 40vh; /* Limit content height */
+      overflow-y: auto;
+    }
+
+    .fixed-air-popup {
+      top: 16px !important;
+      right: unset !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      width: calc(100% - 24px) !important;
+      max-width: 360px !important;
+    }
+  }
+
+  /* --- REST OF YOUR ORIGINAL STYLING --- */
   .brand {
     padding: 24px 20px;
     font-weight: 900;
     font-size: 1.4rem;
     letter-spacing: -0.5px;
     color: #5d69fb;
-    background-color: #fdfaf0; /* Matcht nu met de paarse balk van de popup! */
+    background-color: #fdfaf0;
     text-align: center;
   }
 
@@ -601,14 +589,13 @@
     position: relative;
   }
 
-  /* GEFIXEERDE POP-UP RECHTSBOVEN */
   .fixed-air-popup {
     position: absolute;
     top: 20px;
     right: 20px;
     width: 320px;
     background: #fffcf4;
-    border-radius: 6px; /* Iets scherper voor een strakker effect bij het vierkant */
+    border-radius: 6px;
     box-shadow:
       0 10px 30px rgba(0, 0, 0, 0.1),
       5px 5px 0px rgba(132, 80, 255, 0.15);
@@ -620,11 +607,10 @@
     border: 1px solid rgba(0, 0, 0, 0.05);
   }
 
-  /* Paarse bovenbalk met vaste hoogte */
   .popup-top-bar {
     display: flex;
     justify-content: space-between;
-    align-items: center; /* Centreert de knop verticaal ten opzichte van de balk */
+    align-items: center;
     padding: 12px 16px;
     background-color: #5d69fb; /* AIR Paars */
     gap: 12px;
@@ -635,10 +621,10 @@
     box-sizing: border-box;
   }
 
-  /* Titel met witte letters in de top bar */
   .popup-title {
     margin: 0;
-    font-size: 1.1rem; /* Ietsje kleiner zodat 2 regels gegarandeerd passen */
+    font-size: 1.1rem;
+    color: #ffffff;
     font-weight: 800;
     line-height: 1.2;
     color: #ffffff; /* Wit */
@@ -661,12 +647,9 @@
     color: #5d69fb; /* Paars kruisje */
     width: 28px;
     height: 28px;
-
-    /* Flexbox voor perfecte centrering in alle browsers */
     display: flex;
     align-items: center;
     justify-content: center;
-
     border-radius: 4px;
     transition: all 0.2s;
     padding: 0;
@@ -777,7 +760,6 @@
     cursor: pointer;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
     background: #ffffff;
-
     display: flex;
     align-items: center;
     justify-content: center;
