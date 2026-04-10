@@ -14,7 +14,6 @@
 
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
-  let linePath = $state("");
 
   function handleVisualToggle(mode) {
     visualMode = visualMode === mode ? "default" : mode;
@@ -72,11 +71,6 @@
 
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
-  let sidebarOpen = $state(true);
-
-  function toggleSidebar() {
-    sidebarOpen = !sidebarOpen;
-  }
 
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
@@ -199,7 +193,7 @@
           center: [place.longitude, place.latitude],
           offset: [offsetX, offsetY],
           essential: true,
-          speed: 0.8,
+          speed: 0.2,
           curve: 1.2,
         });
       });
