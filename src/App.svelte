@@ -14,6 +14,93 @@
 
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
+  let showHeatmap = $state(false);
+  let enlargedImage = $state(null);
+
+  function getGeojsonData() {
+    return {
+      type: "FeatureCollection",
+      features: allPlaces.map((p) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+        properties: {
+          koepel: p.koepels ? p.koepels.split(";")[0].trim() : "default",
+        },
+      })),
+    };
+  }
+
+  // Functie om de heatmap laag te updaten/aanmaken
+  function updateHeatmap() {
+    if (!map) return;
+
+    if (!map.isStyleLoaded()) {
+      map.once("load", updateHeatmap);
+      return;
+    }
+
+    if (!showHeatmap) {
+      if (map.getLayer("koepel-heatmap")) map.removeLayer("koepel-heatmap");
+      if (map.getSource("places-source")) map.removeSource("places-source");
+      return;
+    }
+
+    if (!map.getSource("places-source")) {
+      map.addSource("places-source", {
+        type: "geojson",
+        data: getGeojsonData(),
+      });
+    } else {
+      map.getSource("places-source").setData(getGeojsonData());
+    }
+
+    if (!map.getLayer("koepel-heatmap")) {
+      map.addLayer({
+        id: "koepel-heatmap",
+        type: "heatmap",
+        source: "places-source",
+        maxzoom: 15,
+        paint: {
+          "heatmap-intensity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10,
+            1,
+            15,
+            3,
+          ],
+          "heatmap-color": [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(93, 105, 251, 0)",
+            0.2,
+            "#B9D4B3",
+            0.4,
+            "#FFB703",
+            0.6,
+            "#E76F51",
+            0.8,
+            "#6C5B7B",
+            1,
+            "#5d69fb",
+          ],
+          "heatmap-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10,
+            15,
+            15,
+            40,
+          ],
+          "heatmap-opacity": 0.7,
+        },
+      });
+    }
+  }
 
   function handleVisualToggle(mode) {
     visualMode = visualMode === mode ? "default" : mode;
@@ -21,59 +108,111 @@
 
   const DOMEIN_COLORS = {
     Werken: "#D4D4D4",
-    "Makers en Werkplaatsen": "#A1A1A1",
+    Werkplaats: "#A1A1A1",
     Cultuur: "#5d69fb",
     Groen: "#2D6A4F",
     Voedsel: "#E76F51",
     Circulair: "#6C5B7B",
     Energie: "#FFB703",
     Klimaat: "#4EA8DE",
-    "Zorg en Welzijn": "#E63946",
+    Zorg: "#E63946",
     Educatie: "#B5A900",
     Wonen: "#D81B60",
+    Community: "#0081A7",
+    Mobiliteit: "#9A031E",
     default: "#5d69fb",
   };
 
   const DOMEIN_ICONS = {
     Werken: "ph-briefcase",
-    "Makers en Werkplaatsen": "ph-hammer",
+    Werkplaats: "ph-hammer",
     Cultuur: "ph-paint-brush-broad",
     Groen: "ph-tree",
     Voedsel: "ph-fork-knife",
     Circulair: "ph-recycle",
     Energie: "ph-lightning",
     Klimaat: "ph-cloud-sun",
-    "Zorg en Welzijn": "ph-heartbeat",
+    Zorg: "ph-heartbeat",
     Educatie: "ph-graduation-cap",
     Wonen: "ph-house",
+    Community: "ph-users-three",
+    Mobiliteit: "ph-car",
     default: "ph-map-pin",
   };
 
   const GEBIED_COLORS = {
+    // Originele lijst & M4H clusters
     "Bospolder-Tussendijken": "#F3B1A5", // Soft Terra/Rose
     "Keilekwartier/M4H": "#A2C3DB", // Dusty Sky Blue
     Delfshaven: "#B9D4B3", // Sage Green
     Keilewerf: "#8EB8C2", // Muted Teal
-    Midelland: "#F6D6AD", // Warm Apricot
+    Middelland: "#F6D6AD", // Warm Apricot
     "Nieuw-Mathenesse": "#A7BCC9", // Cool Steel
     "Nieuwe Westen": "#DBB1BC", // Antique Mauve
-    "Oud Mathenesse": "#C8CDA9", // Pale Olive
+    "Oud-Mathenesse": "#C8CDA9", // Pale Olive
     "Oude Westen": "#EAD9C1", // Sandstone
     Schiehaven: "#B6B6B2", // Ash Grey
     Schiemond: "#C9BCE2", // Pale Lavender
+
+    // Nieuwe wijken uit de uitgebreide lijst
+    Agniesebuurt: "#F9E2AF", // Pale Canary
+    Afrikaanderwijk: "#D2E0BF", // Light Moss
+    Blijdorp: "#B0D7D1", // Mint Frost
+    Carnisse: "#E8C1A0", // Peach Sorbet
+    Centrum: "#D1D1D1", // Silver Cloud
+    Crooswijk: "#F2C6DE", // Cotton Candy
+    "De Esch": "#A9D1E6", // Baby Blue
+    "Eiland van Brienenoord": "#98C9A3", // Willow Green
+    Feijenoord: "#E5B9B5", // Dusty Rose
+    Hillesluis: "#E6E2B1", // Straw
+    Hoogkwartier: "#C1D3FE", // Periwinkle
+    Katendrecht: "#FBC4AB", // Apricot Pink
+    "Kralingen-Crooswijk": "#D8E2DC", // Linen
+    Mathenesse: "#DEE2FF", // Lavender Mist
+    Noordereiland: "#BEE1E6", // Ice Blue
+    "Oud-Charlois": "#E2ECE9", // Mint Cream
+    Pendrecht: "#D6E2E9", // Cloud
+    "Prins Alexander": "#FAD2E1", // Soft Pink
+    Rotterdam: "#E9ECEF", // Light Slate
+    "Rotterdam-Noord": "#C9ADA7", // Rosy Brown
+    Struisenburg: "#F6BD60", // Muted Orange
+    Tarwewijk: "#ADC178", // Sage
+    Vreewijk: "#A3C4BC", // Eucalyptus
+    Zevenkamp: "#D4A373", // Tan
+    Zomerhofkwartier: "#FFDAC1", // Shell
+
+    // Terugvaloptie
     default: "#C1C8FF", // Pastel Brand Purple
   };
 
-  let openSections = $state({ info: false, gebied: false, domein: false });
+  const KOEPEL_COLORS = {
+    Welzijnscoalitie: "#5d69fb",
+    "Rotterdam Circulair": "#6C5B7B",
+    "Energie van Rotterdam": "#FFB703",
+    Groen010: "#2D6A4F",
+    default: "#C1C8FF",
+  };
+
+  let openSections = $state({
+    info: false,
+    gebied: false,
+    domein: false,
+    koepel: false,
+  });
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
 
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
+  let selectedKoepels = $state([]);
+  let linePath = $state("");
 
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
+  );
+  let uniqueKoepels = $derived(
+    [...new Set(allPlaces.map((p) => p.koepels))].filter(Boolean).sort(),
   );
   let uniqueDomeinen = $derived(
     [
@@ -89,11 +228,15 @@
     allPlaces.filter((p) => {
       const matchesGebied =
         selectedGebieden.length === 0 || selectedGebieden.includes(p.gebied);
+      const koepelValues = (p.koepels || "").split(";").map((k) => k.trim());
+      const matchesKoepel =
+        selectedKoepels.length === 0 ||
+        koepelValues.some((k) => selectedKoepels.includes(k));
       const placeDomeinen = p.domeinen.split(";").map((d) => d.trim());
       const matchesDomein =
         selectedDomeinen.length === 0 ||
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
-      return matchesGebied && matchesDomein;
+      return matchesGebied && matchesKoepel && matchesDomein;
     }),
   );
 
@@ -129,6 +272,8 @@
       new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
       "bottom-right",
     );
+
+    map.on("load", () => updateHeatmap());
   }
 
   function closePopup() {
@@ -164,6 +309,12 @@
         const color = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
         el.style.borderColor = color;
         // Optional: slight background tint to match the pastel border
+        el.style.backgroundColor = "#ffffff";
+      } else if (visualMode === "koepel") {
+        const koepelKey =
+          (place.koepels || "").split(";").map((k) => k.trim())[0] || "default";
+        const color = KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
+        el.style.borderColor = color;
         el.style.backgroundColor = "#ffffff";
       } else {
         // Default purple-ish border from your original design
@@ -209,6 +360,23 @@
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
   }
+
+  // Effect dat reageert op de heatmap toggle
+  $effect(() => {
+    if (!map || allPlaces.length === 0) return;
+    // Referencing showHeatmap here makes this effect rerun when the toggle changes.
+    const enabled = showHeatmap;
+    updateHeatmap();
+  });
+
+  // Verberg markers als heatmap aan staat (optioneel, voor rust)
+  $effect(() => {
+    if (showHeatmap) {
+      markers.forEach((m) => (m.getElement().style.opacity = "0.2"));
+    } else {
+      markers.forEach((m) => (m.getElement().style.opacity = "1"));
+    }
+  });
 </script>
 
 <div class="layout" onclick={closePopup} role="presentation">
@@ -227,6 +395,18 @@
       {#if openSections.info}
         <div class="accordion-content">
           <p>Informatie over de initiatieven in Rotterdam.</p>
+          <button
+            class="image-button"
+            onclick={() => (enlargedImage = "Waardebloem.png")}
+            title="klik om te vergroten"
+            aria-label="Vergroten Waardebloem afbeelding"
+          >
+            <img
+              src="Waardebloem.png"
+              alt="Waardebloem"
+              style="width: 100%; margin-top: 10px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.05);"
+            />
+          </button>
         </div>
       {/if}
     </div>
@@ -297,10 +477,70 @@
       {/if}
     </div>
 
+    <div class="accordion">
+      <button class="accordion-header" onclick={() => toggleSection("koepel")}>
+        <span>Koepels</span>
+        <span class="icon">{openSections.koepel ? "−" : "+"}</span>
+      </button>
+      {#if openSections.koepel}
+        <div class="accordion-content">
+          <div class="heatmap-toggle-container">
+            <span class="toggle-text">Toon heatmap</span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                checked={showHeatmap}
+                onchange={() => (showHeatmap = !showHeatmap)}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="visual-toggle-container">
+            <span class="toggle-text">Toon kleuren per koepel</span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                checked={visualMode === "koepel"}
+                onchange={() => handleVisualToggle("koepel")}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <hr class="separator" />
+          {#each uniqueKoepels as koepel}
+            <label class="filter-item">
+              <input
+                type="checkbox"
+                checked={selectedKoepels.includes(koepel)}
+                onchange={() =>
+                  (selectedKoepels = toggleFilter(selectedKoepels, koepel))}
+              />
+              <span class="filter-text">{koepel}</span>
+              <span
+                class="color-swatch"
+                style="background-color: {KOEPEL_COLORS[koepel] ||
+                  KOEPEL_COLORS.default}"
+              ></span>
+            </label>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
     <div class="stats">
       <strong>{filteredPlaces.length}</strong> initiatieven getoond
     </div>
   </aside>
+
+  {#if enlargedImage}
+    <div
+      class="image-modal"
+      onclick={() => (enlargedImage = null)}
+      role="presentation"
+    >
+      <img src={enlargedImage} alt="Enlarged" class="enlarged-image" />
+    </div>
+  {/if}
 
   <div class="map-container" bind:this={mapContainer}>
     {#if selectedPlace}
@@ -642,6 +882,7 @@
 
     /* Zorgt dat de tekst netjes verdeeld wordt over max 2 regels */
     display: -webkit-box;
+    line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
@@ -803,5 +1044,38 @@
     font-size: 16px;
     width: 20px;
     text-align: center;
+  }
+
+  .image-button {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: block;
+    width: 100%;
+  }
+
+  .image-button:hover img {
+    opacity: 0.9;
+  }
+
+  .image-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    cursor: pointer;
+  }
+
+  .enlarged-image {
+    max-width: 90vw;
+    max-height: 90vh;
+    object-fit: contain;
   }
 </style>
