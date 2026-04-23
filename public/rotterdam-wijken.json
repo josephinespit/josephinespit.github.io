@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "wijknaam": "Centrum"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [4.460, 51.910],
+            [4.480, 51.910],
+            [4.480, 51.930],
+            [4.460, 51.930],
+            [4.460, 51.910]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "wijknaam": "Delfshaven"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [4.440, 51.900],
+            [4.460, 51.900],
+            [4.460, 51.920],
+            [4.440, 51.920],
+            [4.440, 51.900]
+          ]
+        ]
+      }
+    }
+  ]
+}

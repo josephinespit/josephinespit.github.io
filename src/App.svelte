@@ -24,7 +24,7 @@
   let alleWijken = $state([]);
 
   // --- MAP OPZETTEN ---
-  function initMap() {
+  async function initMap() {
     map = new maplibregl.Map({
       container: mapContainer,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
@@ -33,11 +33,11 @@
       attributionControl: false,
     });
 
-    map.on("load", () => {
+    map.on("load", async () => {
       // 1. Voeg de bron toe
-      map.addSource("rotterdam-wijken", {
+      map.addSource("rotterdam-buurten", {
         type: "geojson",
-        data: "rotterdam-wijken.json",
+        data: "rotterdam-buurten.json",
       });
 
       // 2. NIEUW: Voeg een 'fill' laag toe voor de gebieden (standaard transparant)
@@ -45,10 +45,25 @@
         {
           id: "wijken-fill",
           type: "fill",
-          source: "rotterdam-wijken",
+          source: "rotterdam-buurten",
           paint: {
             "fill-color": "transparent",
             "fill-opacity": 0.2, // Transparantie van het ingekleurde vlak
+          },
+        },
+        "watername_ocean",
+      );
+
+      map.addLayer(
+        {
+          id: "wijken-glow",
+          type: "line",
+          source: "rotterdam-buurten",
+          paint: {
+            "line-color": "#a78bfa",
+            "line-width": 10,
+            "line-opacity": 0, // starts hidden
+            "line-blur": 6,
           },
         },
         "watername_ocean",
@@ -59,7 +74,7 @@
         {
           id: "wijken-outlines",
           type: "line",
-          source: "rotterdam-wijken",
+          source: "rotterdam-buurten",
           paint: {
             "line-color": "#5d69fb",
             "line-width": 1.5,
@@ -87,6 +102,27 @@
       map.on("mouseenter", "wijken-fill", () => {
         map.getCanvas().style.cursor = "pointer";
       });
+
+      const geoRes = await fetch("rotterdam-buurten.json");
+      const geoData = await geoRes.json();
+
+      const centroids = {};
+      const lookup = {};
+      geoData.features.forEach((feature) => {
+        const name = feature.properties?.wijknaam;
+        if (!name) return;
+        const centroid = computeCentroidFromGeometry(feature.geometry);
+        const area = computeGeometryArea(feature.geometry);
+        if (centroid) {
+          centroids[name] = centroid;
+          lookup[name] = { centroid, area };
+        }
+      });
+      wijkCentroids = centroids;
+      wijkLookup = lookup;
+      alleWijken = geoData.features
+        .map((f) => f.properties?.wijknaam)
+        .filter(Boolean);
 
       mapLoaded = true; // Nu mogen we de kleuren via effecten updaten!
     });
@@ -202,12 +238,15 @@
     default: "#C1C8FF",
   };
 
+  // --- UI STATE ---
   let openSections = $state({
     info: false,
     gebied: false,
     domein: false,
     koepel: false,
+    typeInitiatieven: false,
   });
+
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
@@ -215,6 +254,7 @@
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
   let selectedKoepels = $state([]);
+  let selectedTypes = $state([]);
   let linePath = $state("");
 
   let uniqueGebieden = $derived(
@@ -245,7 +285,10 @@
       const matchesDomein =
         selectedDomeinen.length === 0 ||
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
-      return matchesGebied && matchesKoepel && matchesDomein;
+      const placeType = p.location_type === "area" ? "area" : "point";
+      const matchesType =
+        selectedTypes.length === 0 || selectedTypes.includes(placeType);
+      return matchesGebied && matchesKoepel && matchesDomein && matchesType;
     }),
   );
 
@@ -412,6 +455,7 @@
         el.style.backgroundColor = "#ffffff";
       }
 
+      // --- CLICK EVENT (Voor beide gelijk) ---
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (activeMarkerElement)
@@ -419,23 +463,18 @@
         selectedPlace = place;
         activeMarkerElement = el;
         el.classList.add("active-glow");
-        const isMobile = window.innerWidth <= 900;
 
         const isMobile = window.innerWidth <= 900;
         const sidebarWidth = 280;
         const popupWidth = 600;
-
-        // Only apply horizontal offset on desktop
         const offsetX = isMobile ? 0 : (sidebarWidth - popupWidth) / 2;
-
-        // Optional: small vertical tweak for mobile (since popup is on top)
         const offsetY = isMobile ? -5 : 0;
 
         map.flyTo({
           center: [place.longitude, place.latitude],
           offset: [offsetX, offsetY],
           essential: true,
-          speed: 0.2,
+          speed: 0.6,
           curve: 1.2,
           zoom: 14,
         });
@@ -450,10 +489,65 @@
       );
 
       const m = new maplibregl.Marker({ element: el })
-        .setLngLat([place.longitude, place.latitude])
+        .setLngLat(markerLngLat)
         .addTo(map);
       markers.push(m);
     });
+  });
+
+  // Effect to highlight areas when a place is selected
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+
+    if (!selectedPlace) {
+      // Reset to default
+      map.setFilter("wijken-fill", null);
+      map.setFilter("wijken-outlines", null);
+      map.setFilter("wijken-glow", null);
+      map.setPaintProperty("wijken-glow", "line-opacity", 0);
+      map.setPaintProperty("wijken-fill", "fill-color", "transparent");
+      map.setPaintProperty("wijken-fill", "fill-opacity", 0.2);
+      map.setPaintProperty("wijken-outlines", "line-color", "#5d69fb");
+      map.setPaintProperty("wijken-outlines", "line-width", 1.5);
+      map.setPaintProperty("wijken-outlines", "line-opacity", 0.2);
+      return;
+    }
+
+    // Get the areas for the selected place
+    const areaNames = (selectedPlace.gebied || "")
+      .split(";")
+      .map((name) => name.trim())
+      .filter(Boolean);
+
+    if (areaNames.length === 0) {
+      // No areas, reset
+      map.setFilter("wijken-fill", null);
+      map.setFilter("wijken-outlines", null);
+      map.setFilter("wijken-glow", null);
+      map.setPaintProperty("wijken-glow", "line-opacity", 0);
+      map.setPaintProperty("wijken-fill", "fill-color", "transparent");
+      map.setPaintProperty("wijken-fill", "fill-opacity", 0.2);
+      map.setPaintProperty("wijken-outlines", "line-color", "#5d69fb");
+      map.setPaintProperty("wijken-outlines", "line-width", 1.5);
+      map.setPaintProperty("wijken-outlines", "line-opacity", 0.2);
+      return;
+    }
+
+    // Filter to show only the selected areas
+    const filter = ["in", "wijknaam", ...areaNames];
+    map.setFilter("wijken-fill", filter);
+    map.setFilter("wijken-outlines", filter);
+    map.setFilter("wijken-glow", filter);
+
+    // Set glowing outline
+    map.setPaintProperty("wijken-glow", "line-opacity", 0.8);
+    map.setPaintProperty("wijken-outlines", "line-color", "#ffffff");
+    map.setPaintProperty("wijken-outlines", "line-width", 2);
+    map.setPaintProperty("wijken-outlines", "line-opacity", 1);
+
+    // Set see-through purple fill
+    map.setPaintProperty("wijken-fill", "fill-color", "rgba(128, 0, 128, 0.3)");
+    map.setPaintProperty("wijken-fill", "fill-opacity", 1);
   });
 
   function toggleFilter(list, value) {
@@ -712,7 +806,6 @@
     top: 0;
     left: 0;
   }
-
   .sidebar {
     width: 280px;
     height: 100%;
@@ -727,34 +820,29 @@
     position: relative;
   }
 
-  /* MOBILE-SPECIFIC OVERRIDES */
   @media (max-width: 900px) {
     .sidebar {
       position: fixed;
-      top: auto; /* Remove top pin */
-      bottom: 0; /* Pin to bottom */
+      top: auto;
+      bottom: 0;
       left: 0;
       width: 100%;
-      height: auto; /* Shrink to titles */
-      max-height: 70vh; /* Don't cover whole map */
+      height: auto;
+      max-height: 70vh;
       border-right: none;
       border-top: 1px solid rgba(0, 0, 0, 0.1);
       box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
       z-index: 2000;
     }
-
-    /* Hide non-accordion elements on mobile to keep it slim */
     .brand,
     .stats,
     .sidebar-collapse {
       display: none !important;
     }
-
     .accordion-content {
-      max-height: 40vh; /* Limit content height */
+      max-height: 40vh;
       overflow-y: auto;
     }
-
     .fixed-air-popup {
       top: 16px !important;
       right: unset !important;
@@ -765,7 +853,6 @@
     }
   }
 
-  /* --- REST OF YOUR ORIGINAL STYLING --- */
   .brand {
     padding: 24px 20px;
     font-weight: 900;
@@ -775,18 +862,14 @@
     background-color: #fdfaf0;
     text-align: center;
   }
-
   .accordion {
     border-bottom: 1px solid #e0ddd5;
     background: #fdfaf0;
     transition: background-color 0.2s ease;
   }
-
-  /* Gekleurde achtergrond als een sectie open staat */
   .accordion:has(.accordion-content) {
-    background: #fdfaf0; /* Matcht met de lichte hover-kleur van de popup */
+    background: #fdfaf0;
   }
-
   .accordion-header {
     width: 100%;
     padding: 16px 20px;
@@ -804,29 +887,24 @@
     color: #5d69fb;
     text-align: left;
   }
-
   .accordion-header:hover {
     background: rgba(132, 80, 255, 0.05);
   }
-
   .accordion-header .icon {
     font-size: 1.1rem;
     font-weight: normal;
     color: #999;
   }
-
   .accordion-content {
     padding: 0 20px 20px 20px;
     text-align: left;
   }
-
   .accordion-content p {
     font-size: 0.8rem;
     color: #666;
     line-height: 1.4;
     margin: 0;
   }
-
   .filter-item {
     display: flex;
     align-items: center;
@@ -838,13 +916,10 @@
     cursor: pointer;
     text-align: left;
   }
-
-  /* Subtiele hiërarchie-labeling binnen de sidebar content */
   .filter-text {
     flex-grow: 1;
     text-align: left;
   }
-
   .stats {
     margin-top: auto;
     padding: 16px 20px;
@@ -856,42 +931,35 @@
     background: #fdfaf0;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .stats strong {
     color: #5d69fb;
     font-size: 0.85rem;
   }
-
   input[type="checkbox"] {
     accent-color: #5d69fb;
   }
-
   .visual-toggle-container {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
   }
-
   .toggle-text {
     font-size: 0.75rem;
     font-weight: bold;
     color: #666;
   }
-
   .switch {
     position: relative;
     display: inline-block;
     width: 34px;
     height: 20px;
   }
-
   .switch input {
     opacity: 0;
     width: 0;
     height: 0;
   }
-
   .slider {
     position: absolute;
     cursor: pointer;
@@ -903,7 +971,6 @@
     transition: 0.4s;
     border-radius: 20px;
   }
-
   .slider:before {
     position: absolute;
     content: "";
@@ -915,29 +982,24 @@
     transition: 0.4s;
     border-radius: 50%;
   }
-
   input:checked + .slider {
     background-color: #5d69fb;
   }
-
   input:checked + .slider:before {
     transform: translateX(14px);
   }
-
   .separator {
     border: 0;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
     margin: 12px 0;
   }
-
   .color-swatch {
     width: 12px;
     height: 12px;
     display: inline-block;
-    border-radius: 3px; /* Matchend met de p-tags uit de popup */
+    border-radius: 3px;
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
-
   .map-container {
     flex-grow: 1;
     height: 100%;
@@ -958,49 +1020,39 @@
     animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1);
     font-family: "Helvetica", Arial, sans-serif;
     text-align: left;
-    overflow: hidden; /* Cruciaal: houdt de paarse balk binnen de border-radius */
+    overflow: hidden;
     border: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .popup-top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background-color: #5d69fb; /* AIR Paars */
+    background-color: #5d69fb;
     gap: 12px;
-
-    /* Vaste hoogte: 2.8rem voor de tekst + 24px padding = ~68px hoog */
-    /* Dit is hoog genoeg voor exact 2 regels tekst */
     min-height: 68px;
     box-sizing: border-box;
   }
-
   .popup-title {
     margin: 0;
     font-size: 1.1rem;
     color: #ffffff;
     font-weight: 800;
     line-height: 1.2;
-    color: #ffffff; /* Wit */
     flex-grow: 1;
-
-    /* Zorgt dat de tekst netjes verdeeld wordt over max 2 regels */
     display: -webkit-box;
     line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-
-  /* Vierkante witte sluitknop (Perfect gecentreerd) */
   .close-btn {
     background: #ffffff;
     border: none;
-    font-size: 22px; /* Iets groter kruisje vult het blokje mooier op */
-    font-family: Arial, sans-serif; /* Arial heeft een heel symmetrisch kruisje */
+    font-size: 22px;
+    font-family: Arial, sans-serif;
     cursor: pointer;
-    color: #5d69fb; /* Paars kruisje */
+    color: #5d69fb;
     width: 28px;
     height: 28px;
     display: flex;
@@ -1012,20 +1064,16 @@
     flex-shrink: 0;
     line-height: 0;
   }
-
   .close-btn:hover {
     background-color: #fdfaf0;
     color: #1a1a1a;
   }
-
   .air-popup {
     padding: 16px;
   }
-
   .popup-info-row {
     margin-bottom: 14px;
   }
-
   .popup-info-row .label {
     font-weight: bold;
     color: #999;
@@ -1035,13 +1083,11 @@
     display: block;
     margin-bottom: 4px;
   }
-
   .popup-value {
     font-size: 0.85rem;
     color: #333;
     font-weight: 500;
   }
-
   .popup-footer {
     margin-top: 16px;
     padding-top: 12px;
@@ -1170,11 +1216,9 @@
     display: block;
     width: 100%;
   }
-
   .image-button:hover img {
     opacity: 0.9;
   }
-
   .image-modal {
     position: fixed;
     top: 0;
@@ -1188,7 +1232,6 @@
     z-index: 3000;
     cursor: pointer;
   }
-
   .enlarged-image {
     max-width: 90vw;
     max-height: 90vh;
