@@ -2,104 +2,118 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
-  import { basemapStyle } from "./lib/basemap/index.js";
   import "maplibre-gl/dist/maplibre-gl.css";
 
   // --- STATE ---
   let mapContainer = $state();
   let map = $state();
+  let mapLoaded = $state(false); // Nieuw: houdt bij of we veilig kleuren kunnen updaten
   let allPlaces = $state([]);
   let markers = [];
   let visualMode = $state("domein");
 
+  let hoveredwijkId = $state(null);
+  let hoveredwijkName = $state(null);
+  let hoverLabelMarker = null;
+
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
-  let showHeatmap = $state(false);
   let enlargedImage = $state(null);
+  let wijkCentroids = $state({});
+  let wijkLookup = $state({});
+  let alleWijken = $state([]);
 
-  function getGeojsonData() {
-    return {
-      type: "FeatureCollection",
-      features: allPlaces.map((p) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-        properties: {
-          koepel: p.koepels ? p.koepels.split(";")[0].trim() : "default",
+  // --- MAP OPZETTEN ---
+  function initMap() {
+    map = new maplibregl.Map({
+      container: mapContainer,
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      center: [4.47, 51.915],
+      zoom: 12.5,
+      attributionControl: false,
+    });
+
+    map.on("load", () => {
+      // 1. Voeg de bron toe
+      map.addSource("rotterdam-wijken", {
+        type: "geojson",
+        data: "rotterdam-wijken.json",
+      });
+
+      // 2. NIEUW: Voeg een 'fill' laag toe voor de gebieden (standaard transparant)
+      map.addLayer(
+        {
+          id: "wijken-fill",
+          type: "fill",
+          source: "rotterdam-wijken",
+          paint: {
+            "fill-color": "transparent",
+            "fill-opacity": 0.2, // Transparantie van het ingekleurde vlak
+          },
         },
-      })),
-    };
+        "watername_ocean",
+      );
+
+      // 3. Voeg de outline laag toe (bovenop de fill laag)
+      map.addLayer(
+        {
+          id: "wijken-outlines",
+          type: "line",
+          source: "rotterdam-wijken",
+          paint: {
+            "line-color": "#5d69fb",
+            "line-width": 1.5,
+            "line-opacity": 0.2,
+          },
+        },
+        "watername_ocean",
+      );
+      map.on("mousemove", "wijken-fill", (e) => {
+        if (!e.features || !e.features.length) return;
+        const feature = e.features[0];
+        const wijknaam = feature.properties?.wijknaam;
+        if (!wijknaam) return;
+        if (hoveredwijkName === wijknaam) return;
+        hoveredwijkName = wijknaam;
+        showwijkHoverLabel(wijknaam);
+      });
+
+      map.on("mouseleave", "wijken-fill", () => {
+        hoveredwijkName = null;
+        removeHoverLabel();
+        map.getCanvas().style.cursor = "";
+      });
+
+      map.on("mouseenter", "wijken-fill", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      mapLoaded = true; // Nu mogen we de kleuren via effecten updaten!
+    });
   }
 
-  // Functie om de heatmap laag te updaten/aanmaken
-  function updateHeatmap() {
-    if (!map) return;
-
-    if (!map.isStyleLoaded()) {
-      map.once("load", updateHeatmap);
-      return;
-    }
-
-    if (!showHeatmap) {
-      if (map.getLayer("koepel-heatmap")) map.removeLayer("koepel-heatmap");
-      if (map.getSource("places-source")) map.removeSource("places-source");
-      return;
-    }
-
-    if (!map.getSource("places-source")) {
-      map.addSource("places-source", {
-        type: "geojson",
-        data: getGeojsonData(),
-      });
+  function showwijkHoverLabel(wijknaam) {
+    const position = wijkCentroids[wijknaam];
+    if (!position || !map) return;
+    if (!hoverLabelMarker) {
+      const label = document.createElement("div");
+      label.className = "wijk-hover-label";
+      hoverLabelMarker = new maplibregl.Marker({
+        element: label,
+        anchor: "center",
+      })
+        .setLngLat(position)
+        .addTo(map);
     } else {
-      map.getSource("places-source").setData(getGeojsonData());
+      hoverLabelMarker.setLngLat(position);
     }
+    hoverLabelMarker.getElement().textContent = wijknaam;
+  }
 
-    if (!map.getLayer("koepel-heatmap")) {
-      map.addLayer({
-        id: "koepel-heatmap",
-        type: "heatmap",
-        source: "places-source",
-        maxzoom: 15,
-        paint: {
-          "heatmap-intensity": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            10,
-            1,
-            15,
-            3,
-          ],
-          "heatmap-color": [
-            "interpolate",
-            ["linear"],
-            ["heatmap-density"],
-            0,
-            "rgba(93, 105, 251, 0)",
-            0.2,
-            "#B9D4B3",
-            0.4,
-            "#FFB703",
-            0.6,
-            "#E76F51",
-            0.8,
-            "#6C5B7B",
-            1,
-            "#5d69fb",
-          ],
-          "heatmap-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            10,
-            15,
-            15,
-            40,
-          ],
-          "heatmap-opacity": 0.7,
-        },
-      });
-    }
+  function removeHoverLabel() {
+    if (!hoverLabelMarker) return;
+    hoverLabelMarker.remove();
+    hoverLabelMarker = null;
   }
 
   function handleVisualToggle(mode) {
@@ -141,48 +155,43 @@
   };
 
   const GEBIED_COLORS = {
-    // Originele lijst & M4H clusters
-    "Bospolder-Tussendijken": "#F3B1A5", // Soft Terra/Rose
-    "Keilekwartier/M4H": "#A2C3DB", // Dusty Sky Blue
-    Delfshaven: "#B9D4B3", // Sage Green
-    Keilewerf: "#8EB8C2", // Muted Teal
-    Middelland: "#F6D6AD", // Warm Apricot
-    "Nieuw-Mathenesse": "#A7BCC9", // Cool Steel
-    "Nieuwe Westen": "#DBB1BC", // Antique Mauve
-    "Oud-Mathenesse": "#C8CDA9", // Pale Olive
-    "Oude Westen": "#EAD9C1", // Sandstone
-    Schiehaven: "#B6B6B2", // Ash Grey
-    Schiemond: "#C9BCE2", // Pale Lavender
-
-    // Nieuwe wijken uit de uitgebreide lijst
-    Agniesebuurt: "#F9E2AF", // Pale Canary
-    Afrikaanderwijk: "#D2E0BF", // Light Moss
-    Blijdorp: "#B0D7D1", // Mint Frost
-    Carnisse: "#E8C1A0", // Peach Sorbet
-    Centrum: "#D1D1D1", // Silver Cloud
-    Crooswijk: "#F2C6DE", // Cotton Candy
-    "De Esch": "#A9D1E6", // Baby Blue
-    "Eiland van Brienenoord": "#98C9A3", // Willow Green
-    Feijenoord: "#E5B9B5", // Dusty Rose
-    Hillesluis: "#E6E2B1", // Straw
-    Hoogkwartier: "#C1D3FE", // Periwinkle
-    Katendrecht: "#FBC4AB", // Apricot Pink
-    "Kralingen-Crooswijk": "#D8E2DC", // Linen
-    Mathenesse: "#DEE2FF", // Lavender Mist
-    Noordereiland: "#BEE1E6", // Ice Blue
-    "Oud-Charlois": "#E2ECE9", // Mint Cream
-    Pendrecht: "#D6E2E9", // Cloud
-    "Prins Alexander": "#FAD2E1", // Soft Pink
-    Rotterdam: "#E9ECEF", // Light Slate
-    "Rotterdam-Noord": "#C9ADA7", // Rosy Brown
-    Struisenburg: "#F6BD60", // Muted Orange
-    Tarwewijk: "#ADC178", // Sage
-    Vreewijk: "#A3C4BC", // Eucalyptus
-    Zevenkamp: "#D4A373", // Tan
-    Zomerhofkwartier: "#FFDAC1", // Shell
-
-    // Terugvaloptie
-    default: "#C1C8FF", // Pastel Brand Purple
+    "Bospolder-Tussendijken": "#F3B1A5",
+    "Keilekwartier/M4H": "#A2C3DB",
+    Delfshaven: "#B9D4B3",
+    Keilewerf: "#8EB8C2",
+    Middelland: "#F6D6AD",
+    "Nieuw-Mathenesse": "#A7BCC9",
+    "Nieuwe Westen": "#DBB1BC",
+    "Oud-Mathenesse": "#C8CDA9",
+    "Oude Westen": "#EAD9C1",
+    Schiehaven: "#B6B6B2",
+    Schiemond: "#C9BCE2",
+    Agniesewijk: "#F9E2AF",
+    Afrikaanderwijk: "#D2E0BF",
+    Blijdorp: "#B0D7D1",
+    Carnisse: "#E8C1A0",
+    Centrum: "#D1D1D1",
+    Crooswijk: "#F2C6DE",
+    "De Esch": "#A9D1E6",
+    "Eiland van Brienenoord": "#98C9A3",
+    Feijenoord: "#E5B9B5",
+    Hillesluis: "#E6E2B1",
+    Hoogkwartier: "#C1D3FE",
+    Katendrecht: "#FBC4AB",
+    "Kralingen-Crooswijk": "#D8E2DC",
+    Mathenesse: "#DEE2FF",
+    Noordereiland: "#BEE1E6",
+    "Oud-Charlois": "#E2ECE9",
+    Pendrecht: "#D6E2E9",
+    "Prins Alexander": "#FAD2E1",
+    Rotterdam: "#E9ECEF",
+    "Rotterdam-Noord": "#C9ADA7",
+    Struisenburg: "#F6BD60",
+    Tarwewijk: "#ADC178",
+    Vreewijk: "#A3C4BC",
+    Zevenkamp: "#D4A373",
+    Zomerhofkwartier: "#FFDAC1",
+    default: "#C1C8FF",
   };
 
   const KOEPEL_COLORS = {
@@ -253,27 +262,105 @@
     });
   });
 
-  function initMap() {
-    map = new maplibregl.Map({
-      container: mapContainer,
-      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      center: [4.47, 51.915],
-      zoom: 12.5,
-      attributionControl: false,
-      fadeDuration: 0,
+  function computeCentroidFromGeometry(geometry) {
+    if (!geometry || !geometry.type || !geometry.coordinates) return null;
+    if (geometry.type === "Point") return geometry.coordinates;
+    if (geometry.type === "Polygon")
+      return computePolygonCentroid(geometry.coordinates);
+    if (geometry.type === "MultiPolygon") {
+      let totalArea = 0;
+      let weightedX = 0;
+      let weightedY = 0;
+
+      geometry.coordinates.forEach((polygon) => {
+        const centroid = computePolygonCentroid(polygon);
+        const area = computePolygonArea(polygon[0]);
+        if (area && centroid) {
+          totalArea += area;
+          weightedX += centroid[0] * area;
+          weightedY += centroid[1] * area;
+        }
+      });
+
+      if (totalArea) return [weightedX / totalArea, weightedY / totalArea];
+      return null;
+    }
+    return null;
+  }
+
+  function computeGeometryArea(geometry) {
+    if (!geometry || !geometry.type || !geometry.coordinates) return 0;
+    if (geometry.type === "Polygon") {
+      return computePolygonArea(geometry.coordinates[0]);
+    }
+    if (geometry.type === "MultiPolygon") {
+      return geometry.coordinates.reduce(
+        (sum, polygon) => sum + computePolygonArea(polygon[0]),
+        0,
+      );
+    }
+    return 0;
+  }
+
+  function getAreaInitiativeCentroid(place) {
+    const areaNames = (place.gebied || "")
+      .split(";")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (areaNames.length === 0) return [place.longitude, place.latitude];
+
+    const validAreas = areaNames
+      .map((name) => wijkLookup[name])
+      .filter(Boolean);
+    if (validAreas.length === 0) return [place.longitude, place.latitude];
+
+    let totalArea = 0;
+    let weightedLng = 0;
+    let weightedLat = 0;
+
+    validAreas.forEach((info) => {
+      const centroid = info.centroid;
+      const area = info.area || 1;
+      if (centroid && Array.isArray(centroid) && centroid.length === 2) {
+        weightedLng += centroid[0] * area;
+        weightedLat += centroid[1] * area;
+        totalArea += area;
+      }
     });
 
-    map.addControl(
-      new maplibregl.AttributionControl({ compact: true }),
-      "bottom-left",
-    );
-    map.addControl(new maplibregl.ScaleControl(), "bottom-right");
-    map.addControl(
-      new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
-      "bottom-right",
-    );
+    if (totalArea === 0) return [place.longitude, place.latitude];
+    return [weightedLng / totalArea, weightedLat / totalArea];
+  }
 
-    map.on("load", () => updateHeatmap());
+  function computePolygonArea(ring) {
+    let area = 0;
+    for (let i = 0; i < ring.length; i += 1) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[(i + 1) % ring.length];
+      area += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(area) / 2;
+  }
+
+  function computePolygonCentroid(polygon) {
+    const ring = polygon[0];
+    if (!ring || ring.length === 0) return null;
+    let signedArea = 0;
+    let cx = 0;
+    let cy = 0;
+
+    for (let i = 0; i < ring.length; i += 1) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[(i + 1) % ring.length];
+      const cross = x1 * y2 - x2 * y1;
+      signedArea += cross;
+      cx += (x1 + x2) * cross;
+      cy += (y1 + y2) * cross;
+    }
+
+    if (signedArea === 0) return [ring[0][0], ring[0][1]];
+    const area = signedArea * 0.5;
+    return [cx / (6 * area), cy / (6 * area)];
   }
 
   function closePopup() {
@@ -291,8 +378,11 @@
 
     filteredPlaces.forEach((place) => {
       const el = document.createElement("div");
-      el.className = "air-marker";
-      const domeinList = place.domeinen.split(";").map((d) => d.trim());
+      const isArea = place.location_type === "area";
+
+      // Gebruik specifieke class afhankelijk van punt/gebied
+      el.className = isArea ? "air-area-marker" : "air-marker";
+      const domeinList = (place.domeinen || "").split(";").map((d) => d.trim());
 
       // --- ALWAYS USE DOMEIN COLORS FOR ICONS ---
       let iconsHtml = "";
@@ -331,6 +421,7 @@
         el.classList.add("active-glow");
         const isMobile = window.innerWidth <= 900;
 
+        const isMobile = window.innerWidth <= 900;
         const sidebarWidth = 280;
         const popupWidth = 600;
 
@@ -346,8 +437,17 @@
           essential: true,
           speed: 0.2,
           curve: 1.2,
+          zoom: 14,
         });
       });
+
+      const markerPosition = isArea
+        ? getAreaInitiativeCentroid(place)
+        : [place.longitude, place.latitude];
+      const markerLngLat = new maplibregl.LngLat(
+        markerPosition[0] ?? place.longitude,
+        markerPosition[1] ?? place.latitude,
+      );
 
       const m = new maplibregl.Marker({ element: el })
         .setLngLat([place.longitude, place.latitude])
@@ -360,23 +460,6 @@
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
   }
-
-  // Effect dat reageert op de heatmap toggle
-  $effect(() => {
-    if (!map || allPlaces.length === 0) return;
-    // Referencing showHeatmap here makes this effect rerun when the toggle changes.
-    const enabled = showHeatmap;
-    updateHeatmap();
-  });
-
-  // Verberg markers als heatmap aan staat (optioneel, voor rust)
-  $effect(() => {
-    if (showHeatmap) {
-      markers.forEach((m) => (m.getElement().style.opacity = "0.2"));
-    } else {
-      markers.forEach((m) => (m.getElement().style.opacity = "1"));
-    }
-  });
 </script>
 
 <div class="layout" onclick={closePopup} role="presentation">
@@ -439,6 +522,39 @@
     </div>
 
     <div class="accordion">
+      <button
+        class="accordion-header"
+        onclick={() => toggleSection("typeInitiatieven")}
+      >
+        <span>Type initiatieven</span>
+        <span class="icon">{openSections.typeInitiatieven ? "−" : "+"}</span>
+      </button>
+      {#if openSections.typeInitiatieven}
+        <div class="accordion-content">
+          <label class="filter-item">
+            <input
+              type="checkbox"
+              checked={selectedTypes.includes("point")}
+              onchange={() =>
+                (selectedTypes = toggleFilter(selectedTypes, "point"))}
+            />
+            <span class="filter-text">Plekken</span>
+          </label>
+
+          <label class="filter-item">
+            <input
+              type="checkbox"
+              checked={selectedTypes.includes("area")}
+              onchange={() =>
+                (selectedTypes = toggleFilter(selectedTypes, "area"))}
+            />
+            <span class="filter-text">Koepels</span>
+          </label>
+        </div>
+      {/if}
+    </div>
+
+    <div class="accordion">
       <button class="accordion-header" onclick={() => toggleSection("gebied")}>
         <span>Gebied</span>
         <span class="icon">{openSections.gebied ? "−" : "+"}</span>
@@ -484,17 +600,6 @@
       </button>
       {#if openSections.koepel}
         <div class="accordion-content">
-          <div class="heatmap-toggle-container">
-            <span class="toggle-text">Toon heatmap</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                checked={showHeatmap}
-                onchange={() => (showHeatmap = !showHeatmap)}
-              />
-              <span class="slider"></span>
-            </label>
-          </div>
           <div class="visual-toggle-container">
             <span class="toggle-text">Toon kleuren per koepel</span>
             <label class="switch">
@@ -567,7 +672,7 @@
           <div class="popup-info-row">
             <span class="label">Domeinen</span>
             <div class="popup-tags">
-              {#each selectedPlace.domeinen.split(";") as d}
+              {#each (selectedPlace.domeinen || "").split(";") as d}
                 <span
                   class="p-tag"
                   style="background-color: {DOMEIN_COLORS[d.trim()] ||
@@ -904,9 +1009,7 @@
     border-radius: 4px;
     transition: all 0.2s;
     padding: 0;
-    flex-shrink: 0; /* Voorkomt dat het knopje platgedrukt wordt */
-
-    /* Reset voor vreemde browser-lijnhéritages */
+    flex-shrink: 0;
     line-height: 0;
   }
 
@@ -955,20 +1058,7 @@
       transform: translateY(0);
     }
   }
-  /* SIDEBAR KLEUREN */
-  .color-swatch {
-    width: 12px;
-    height: 12px;
-    display: inline-block;
-    margin-left: auto;
-    border: 1px solid rgba(0, 0, 0, 0.05);
-  }
-  .filter-text {
-    flex-grow: 1;
-    text-align: left;
-  }
 
-  /* TAGS EN LINKS */
   .p-tag {
     font-size: 9px;
     padding: 3px 6px;
@@ -981,13 +1071,11 @@
     display: inline-block;
     border-radius: 5px;
   }
-
   .popup-tags {
     display: flex;
     flex-wrap: wrap;
     margin-top: 8px;
   }
-
   .popup-link {
     display: inline-block;
     font-size: 11px;
@@ -1002,34 +1090,30 @@
     background: #fdfaf0;
   }
 
-  /* MARKERS EN GLOW EFFECT */
+  /* POINT MARKERS (Oude stijl met border) */
   :global(.air-marker) {
-    min-width: 26px; /* Basisbreedte voor 1 icoon */
+    min-width: 26px;
     height: 26px;
-    border: 2px solid #737ac6; /* Paarse omlijning maakt het witte rondje knallend */
-    border-radius: 13px; /* Zorgt dat het een pilvorm wordt als er meer iconen bijkomen */
+    border: 2px solid #737ac6;
+    border-radius: 13px;
     cursor: pointer;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
     background: #ffffff;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 2px; /* Ruimte tussen icoontjes */
+    gap: 2px;
     padding: 0 4px;
     box-sizing: border-box;
   }
-
   :global(.air-marker i) {
     font-size: 14px;
     line-height: 1;
   }
-
   :global(.air-marker:hover) {
-    transform: scale(1.15); /* Subtiel groter maken ipv harde px-verandering */
+    transform: scale(1.15);
     z-index: 1000;
   }
-
-  /* Actieve marker */
   :global(.air-marker.active-glow) {
     z-index: 1001;
     border: 2.5px solid #5d69fb;
@@ -1039,7 +1123,39 @@
       0 2px 6px rgba(0, 0, 0, 0.2);
   }
 
-  /* NIEUW: Icoontje in de sidebar */
+  /* AREA MARKERS (Nieuw: Alleen groot icon in het midden van het gebied) */
+  :global(.air-area-marker) {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s cubic-bezier(0.1, 1, 0.1, 1);
+  }
+  :global(.air-area-marker:hover) {
+    transform: scale(1.2);
+    z-index: 1000;
+  }
+  /* Bij active krijgt het icoon de welbekende paarse glow via een CSS filter op de icon */
+  :global(.air-area-marker.active-glow i) {
+    filter: drop-shadow(0 0 8px rgba(132, 80, 255, 0.8)) !important;
+    transform: scale(1.1);
+  }
+
+  :global(.wijk-hover-label) {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.6);
+    color: #5d69fb;
+    font-size: 13px;
+    font-weight: 400;
+    padding: 5px 5px;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    white-space: nowrap;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    pointer-events: none;
+    z-index: 20;
+  }
+
   :global(.sidebar-icon) {
     font-size: 16px;
     width: 20px;
