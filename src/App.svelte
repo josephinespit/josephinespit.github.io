@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
-  import { basemapStyle } from "./lib/basemap/index.js";
+  // import { basemapStyle } from "./lib/basemap/index.js"; // Indien je deze niet gebruikt, mag ie weg
   import "maplibre-gl/dist/maplibre-gl.css";
 
   // --- STATE ---
@@ -14,98 +14,47 @@
 
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
-  let showHeatmap = $state(false);
   let enlargedImage = $state(null);
 
-  function getGeojsonData() {
-    return {
-      type: "FeatureCollection",
-      features: allPlaces.map((p) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-        properties: {
-          koepel: p.koepels ? p.koepels.split(";")[0].trim() : "default",
-        },
-      })),
-    };
-  }
+  // --- MAP OPZETTEN ---
+  function initMap() {
+    map = new maplibregl.Map({
+      container: mapContainer,
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      center: [4.47, 51.915],
+      zoom: 12.5,
+      attributionControl: false,
+    });
 
-  // Functie om de heatmap laag te updaten/aanmaken
-  function updateHeatmap() {
-    if (!map) return;
-
-    if (!map.isStyleLoaded()) {
-      map.once("load", updateHeatmap);
-      return;
-    }
-
-    if (!showHeatmap) {
-      if (map.getLayer("koepel-heatmap")) map.removeLayer("koepel-heatmap");
-      if (map.getSource("places-source")) map.removeSource("places-source");
-      return;
-    }
-
-    if (!map.getSource("places-source")) {
-      map.addSource("places-source", {
+    map.on("load", () => {
+      // 1. Voeg de lokale buurten JSON toe
+      map.addSource("rotterdam-buurten", {
         type: "geojson",
-        data: getGeojsonData(),
+        data: "rotterdam-buurten.json", // Zorg dat dit bestand in je /public folder staat!
       });
-    } else {
-      map.getSource("places-source").setData(getGeojsonData());
-    }
 
-    if (!map.getLayer("koepel-heatmap")) {
-      map.addLayer({
-        id: "koepel-heatmap",
-        type: "heatmap",
-        source: "places-source",
-        maxzoom: 15,
-        paint: {
-          "heatmap-intensity": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            10,
-            1,
-            15,
-            3,
-          ],
-          "heatmap-color": [
-            "interpolate",
-            ["linear"],
-            ["heatmap-density"],
-            0,
-            "rgba(93, 105, 251, 0)",
-            0.2,
-            "#B9D4B3",
-            0.4,
-            "#FFB703",
-            0.6,
-            "#E76F51",
-            0.8,
-            "#6C5B7B",
-            1,
-            "#5d69fb",
-          ],
-          "heatmap-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            10,
-            15,
-            15,
-            40,
-          ],
-          "heatmap-opacity": 0.7,
+      // 2. Voeg een simpele lijn-laag toe voor de outlines
+      map.addLayer(
+        {
+          id: "buurten-outlines",
+          type: "line",
+          source: "rotterdam-buurten",
+          paint: {
+            "line-color": "#5d69fb", // AIR paars (maak dit "#888888" voor neutraal grijs)
+            "line-width": 1.5,
+            "line-opacity": 0.2, // Subtiel zichtbaar
+          },
         },
-      });
-    }
+        "watername_ocean",
+      ); // Plaatst de lijnen net onder de tekst-labels op de kaart
+    });
   }
 
   function handleVisualToggle(mode) {
     visualMode = visualMode === mode ? "default" : mode;
   }
 
+  // --- CONFIGURATIES ---
   const DOMEIN_COLORS = {
     Werken: "#D4D4D4",
     Werkplaats: "#A1A1A1",
@@ -141,48 +90,43 @@
   };
 
   const GEBIED_COLORS = {
-    // Originele lijst & M4H clusters
-    "Bospolder-Tussendijken": "#F3B1A5", // Soft Terra/Rose
-    "Keilekwartier/M4H": "#A2C3DB", // Dusty Sky Blue
-    Delfshaven: "#B9D4B3", // Sage Green
-    Keilewerf: "#8EB8C2", // Muted Teal
-    Middelland: "#F6D6AD", // Warm Apricot
-    "Nieuw-Mathenesse": "#A7BCC9", // Cool Steel
-    "Nieuwe Westen": "#DBB1BC", // Antique Mauve
-    "Oud-Mathenesse": "#C8CDA9", // Pale Olive
-    "Oude Westen": "#EAD9C1", // Sandstone
-    Schiehaven: "#B6B6B2", // Ash Grey
-    Schiemond: "#C9BCE2", // Pale Lavender
-
-    // Nieuwe wijken uit de uitgebreide lijst
-    Agniesebuurt: "#F9E2AF", // Pale Canary
-    Afrikaanderwijk: "#D2E0BF", // Light Moss
-    Blijdorp: "#B0D7D1", // Mint Frost
-    Carnisse: "#E8C1A0", // Peach Sorbet
-    Centrum: "#D1D1D1", // Silver Cloud
-    Crooswijk: "#F2C6DE", // Cotton Candy
-    "De Esch": "#A9D1E6", // Baby Blue
-    "Eiland van Brienenoord": "#98C9A3", // Willow Green
-    Feijenoord: "#E5B9B5", // Dusty Rose
-    Hillesluis: "#E6E2B1", // Straw
-    Hoogkwartier: "#C1D3FE", // Periwinkle
-    Katendrecht: "#FBC4AB", // Apricot Pink
-    "Kralingen-Crooswijk": "#D8E2DC", // Linen
-    Mathenesse: "#DEE2FF", // Lavender Mist
-    Noordereiland: "#BEE1E6", // Ice Blue
-    "Oud-Charlois": "#E2ECE9", // Mint Cream
-    Pendrecht: "#D6E2E9", // Cloud
-    "Prins Alexander": "#FAD2E1", // Soft Pink
-    Rotterdam: "#E9ECEF", // Light Slate
-    "Rotterdam-Noord": "#C9ADA7", // Rosy Brown
-    Struisenburg: "#F6BD60", // Muted Orange
-    Tarwewijk: "#ADC178", // Sage
-    Vreewijk: "#A3C4BC", // Eucalyptus
-    Zevenkamp: "#D4A373", // Tan
-    Zomerhofkwartier: "#FFDAC1", // Shell
-
-    // Terugvaloptie
-    default: "#C1C8FF", // Pastel Brand Purple
+    "Bospolder-Tussendijken": "#F3B1A5",
+    "Keilekwartier/M4H": "#A2C3DB",
+    Delfshaven: "#B9D4B3",
+    Keilewerf: "#8EB8C2",
+    Middelland: "#F6D6AD",
+    "Nieuw-Mathenesse": "#A7BCC9",
+    "Nieuwe Westen": "#DBB1BC",
+    "Oud-Mathenesse": "#C8CDA9",
+    "Oude Westen": "#EAD9C1",
+    Schiehaven: "#B6B6B2",
+    Schiemond: "#C9BCE2",
+    Agniesebuurt: "#F9E2AF",
+    Afrikaanderwijk: "#D2E0BF",
+    Blijdorp: "#B0D7D1",
+    Carnisse: "#E8C1A0",
+    Centrum: "#D1D1D1",
+    Crooswijk: "#F2C6DE",
+    "De Esch": "#A9D1E6",
+    "Eiland van Brienenoord": "#98C9A3",
+    Feijenoord: "#E5B9B5",
+    Hillesluis: "#E6E2B1",
+    Hoogkwartier: "#C1D3FE",
+    Katendrecht: "#FBC4AB",
+    "Kralingen-Crooswijk": "#D8E2DC",
+    Mathenesse: "#DEE2FF",
+    Noordereiland: "#BEE1E6",
+    "Oud-Charlois": "#E2ECE9",
+    Pendrecht: "#D6E2E9",
+    "Prins Alexander": "#FAD2E1",
+    Rotterdam: "#E9ECEF",
+    "Rotterdam-Noord": "#C9ADA7",
+    Struisenburg: "#F6BD60",
+    Tarwewijk: "#ADC178",
+    Vreewijk: "#A3C4BC",
+    Zevenkamp: "#D4A373",
+    Zomerhofkwartier: "#FFDAC1",
+    default: "#C1C8FF",
   };
 
   const KOEPEL_COLORS = {
@@ -193,12 +137,14 @@
     default: "#C1C8FF",
   };
 
+  // --- UI STATE ---
   let openSections = $state({
     info: false,
     gebied: false,
     domein: false,
     koepel: false,
   });
+
   function toggleSection(name) {
     openSections[name] = !openSections[name];
   }
@@ -206,7 +152,6 @@
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
   let selectedKoepels = $state([]);
-  let linePath = $state("");
 
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
@@ -240,6 +185,7 @@
     }),
   );
 
+  // --- DATA INLADEN ---
   onMount(async () => {
     const response = await fetch("initiatieven.csv");
     const csvString = await response.text();
@@ -253,37 +199,14 @@
     });
   });
 
-  function initMap() {
-    map = new maplibregl.Map({
-      container: mapContainer,
-      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      center: [4.47, 51.915],
-      zoom: 12.5,
-      attributionControl: false,
-      fadeDuration: 0,
-    });
-
-    map.addControl(
-      new maplibregl.AttributionControl({ compact: true }),
-      "bottom-left",
-    );
-    map.addControl(new maplibregl.ScaleControl(), "bottom-right");
-    map.addControl(
-      new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
-      "bottom-right",
-    );
-
-    map.on("load", () => updateHeatmap());
-  }
-
   function closePopup() {
     if (activeMarkerElement)
       activeMarkerElement.classList.remove("active-glow");
     selectedPlace = null;
     activeMarkerElement = null;
-    linePath = "";
   }
 
+  // --- MARKERS UPDATEN ---
   $effect(() => {
     if (!map) return;
     markers.forEach((m) => m.remove());
@@ -294,7 +217,6 @@
       el.className = "air-marker";
       const domeinList = place.domeinen.split(";").map((d) => d.trim());
 
-      // --- ALWAYS USE DOMEIN COLORS FOR ICONS ---
       let iconsHtml = "";
       domeinList.forEach((d) => {
         const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
@@ -303,24 +225,19 @@
       });
       el.innerHTML = iconsHtml;
 
-      // --- HANDLE THE BORDER COLOR BASED ON MODE ---
       if (visualMode === "gebied") {
         const gebiedKey = place.gebied || "default";
-        const color = GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
-        el.style.borderColor = color;
-        // Optional: slight background tint to match the pastel border
-        el.style.backgroundColor = "#ffffff";
+        el.style.borderColor =
+          GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
       } else if (visualMode === "koepel") {
         const koepelKey =
           (place.koepels || "").split(";").map((k) => k.trim())[0] || "default";
-        const color = KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
-        el.style.borderColor = color;
-        el.style.backgroundColor = "#ffffff";
+        el.style.borderColor =
+          KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
       } else {
-        // Default purple-ish border from your original design
         el.style.borderColor = "#737ac6";
-        el.style.backgroundColor = "#ffffff";
       }
+      el.style.backgroundColor = "#ffffff";
 
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -330,14 +247,9 @@
         activeMarkerElement = el;
         el.classList.add("active-glow");
         const isMobile = window.innerWidth <= 900;
-
         const sidebarWidth = 280;
         const popupWidth = 600;
-
-        // Only apply horizontal offset on desktop
         const offsetX = isMobile ? 0 : (sidebarWidth - popupWidth) / 2;
-
-        // Optional: small vertical tweak for mobile (since popup is on top)
         const offsetY = isMobile ? -5 : 0;
 
         map.flyTo({
@@ -360,23 +272,6 @@
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
   }
-
-  // Effect dat reageert op de heatmap toggle
-  $effect(() => {
-    if (!map || allPlaces.length === 0) return;
-    // Referencing showHeatmap here makes this effect rerun when the toggle changes.
-    const enabled = showHeatmap;
-    updateHeatmap();
-  });
-
-  // Verberg markers als heatmap aan staat (optioneel, voor rust)
-  $effect(() => {
-    if (showHeatmap) {
-      markers.forEach((m) => (m.getElement().style.opacity = "0.2"));
-    } else {
-      markers.forEach((m) => (m.getElement().style.opacity = "1"));
-    }
-  });
 </script>
 
 <div class="layout" onclick={closePopup} role="presentation">
@@ -484,17 +379,6 @@
       </button>
       {#if openSections.koepel}
         <div class="accordion-content">
-          <div class="heatmap-toggle-container">
-            <span class="toggle-text">Toon heatmap</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                checked={showHeatmap}
-                onchange={() => (showHeatmap = !showHeatmap)}
-              />
-              <span class="slider"></span>
-            </label>
-          </div>
           <div class="visual-toggle-container">
             <span class="toggle-text">Toon kleuren per koepel</span>
             <label class="switch">
