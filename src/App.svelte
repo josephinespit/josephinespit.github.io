@@ -2,13 +2,16 @@
   import { onMount } from "svelte";
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
-  // import { basemapStyle } from "./lib/basemap/index.js"; // Indien je deze niet gebruikt, mag ie weg
   import "maplibre-gl/dist/maplibre-gl.css";
+
+  // todo: search bar aanpassen!!!!
 
   // --- STATE ---
   let mapContainer = $state();
   let map = $state();
+  let mapLoaded = $state(false); // Nieuw: houdt bij of we veilig kleuren kunnen updaten
   let allPlaces = $state([]);
+  let gebiedToCentroid = $state({});
   let markers = [];
   let visualMode = $state("domein");
 
@@ -27,26 +30,57 @@
     });
 
     map.on("load", () => {
-      // 1. Voeg de lokale buurten JSON toe
       map.addSource("rotterdam-buurten", {
         type: "geojson",
-        data: "rotterdam-buurten.json", // Zorg dat dit bestand in je /public folder staat!
+        data: "rotterdam-buurten.json",
       });
 
-      // 2. Voeg een simpele lijn-laag toe voor de outlines
+      // 1. Fill laag: houden we nagenoeg transparant voor een subtiele basis
+      map.addLayer(
+        {
+          id: "buurten-fill",
+          type: "fill",
+          source: "rotterdam-buurten",
+          paint: {
+            "fill-color": "#000",
+            "fill-opacity": 0.02,
+          },
+        },
+        "watername_ocean",
+      );
+
+      // 2. NIEUW: De Glow laag (brede lijn met blur)
+      map.addLayer(
+        {
+          id: "buurten-glow",
+          type: "line",
+          source: "rotterdam-buurten",
+          paint: {
+            "line-color": "transparent", // Wordt dynamisch gezet
+            "line-width": 12, // Breedte van de glow
+            "line-blur": 8, // De zachtheid van de rand
+            "line-opacity": 0.6,
+          },
+        },
+        "watername_ocean",
+      );
+
+      // 3. De scherpe outline laag
       map.addLayer(
         {
           id: "buurten-outlines",
           type: "line",
           source: "rotterdam-buurten",
           paint: {
-            "line-color": "#5d69fb", // AIR paars (maak dit "#888888" voor neutraal grijs)
-            "line-width": 1.5,
-            "line-opacity": 0.2, // Subtiel zichtbaar
+            "line-color": "#5d69fb",
+            "line-width": 2,
+            "line-opacity": 0.3,
           },
         },
         "watername_ocean",
-      ); // Plaatst de lijnen net onder de tekst-labels op de kaart
+      );
+
+      mapLoaded = true;
     });
   }
 
@@ -153,6 +187,10 @@
   let selectedDomeinen = $state([]);
   let selectedKoepels = $state([]);
 
+  let showOnlyPoints = $state(false);
+  let showAll = $state(true);
+  let searchQuery = $state("");
+
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
   );
@@ -162,7 +200,7 @@
   let uniqueDomeinen = $derived(
     [
       ...new Set(
-        allPlaces.flatMap((p) => p.domeinen.split(";").map((d) => d.trim())),
+        allPlaces.flatMap((p) => p.domeinen?.split(";").map((d) => d.trim())),
       ),
     ]
       .filter(Boolean)
@@ -177,23 +215,86 @@
       const matchesKoepel =
         selectedKoepels.length === 0 ||
         koepelValues.some((k) => selectedKoepels.includes(k));
-      const placeDomeinen = p.domeinen.split(";").map((d) => d.trim());
+      const placeDomeinen = (p.domeinen || "").split(";").map((d) => d.trim());
       const matchesDomein =
         selectedDomeinen.length === 0 ||
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
-      return matchesGebied && matchesKoepel && matchesDomein;
+      const matchesLocation = showOnlyPoints
+        ? p.location_type === "point"
+        : true;
+      const matchesSearch =
+        searchQuery.trim().length === 0 ||
+        (p.name || "").toLowerCase().includes(searchQuery.trim().toLowerCase());
+      return (
+        matchesGebied &&
+        matchesKoepel &&
+        matchesDomein &&
+        matchesLocation &&
+        matchesSearch
+      );
     }),
   );
+
+  function computeCentroid(geometry) {
+    if (geometry.type === "Polygon") {
+      const coords = geometry.coordinates[0]; // outer ring
+      let sumLng = 0,
+        sumLat = 0;
+      coords.forEach((coord) => {
+        sumLng += coord[0];
+        sumLat += coord[1];
+      });
+      return [sumLng / coords.length, sumLat / coords.length];
+    } else if (geometry.type === "MultiPolygon") {
+      // For simplicity, take first polygon
+      return computeCentroid({
+        type: "Polygon",
+        coordinates: geometry.coordinates[0],
+      });
+    }
+    return null;
+  }
 
   // --- DATA INLADEN ---
   onMount(async () => {
     const response = await fetch("initiatieven.csv");
     const csvString = await response.text();
+    const geoResponse = await fetch("rotterdam-buurten.json");
+    const geoData = await geoResponse.json();
+
+    gebiedToCentroid = {};
+    geoData.features.forEach((feature) => {
+      const buurtnaam = feature.properties.buurtnaam;
+      const centroid = computeCentroid(feature.geometry);
+      if (centroid) {
+        gebiedToCentroid[buurtnaam] = centroid;
+      }
+    });
+
     Papa.parse(csvString, {
       header: true,
       dynamicTyping: true,
       complete: (results) => {
         allPlaces = results.data.filter((p) => p.latitude && p.longitude);
+
+        // Update coordinates for area initiatives
+        allPlaces.forEach((place) => {
+          if (place.location_type === "area") {
+            const gebieden = place.gebied.split(";").map((g) => g.trim());
+            const centroids = gebieden
+              .map((g) => gebiedToCentroid[g])
+              .filter((c) => c);
+            if (centroids.length > 0) {
+              const avgLng =
+                centroids.reduce((sum, c) => sum + c[0], 0) / centroids.length;
+              const avgLat =
+                centroids.reduce((sum, c) => sum + c[1], 0) / centroids.length;
+              place.longitude = avgLng;
+              place.latitude = avgLat;
+            }
+          }
+        });
+
         initMap();
       },
     });
@@ -206,6 +307,37 @@
     activeMarkerElement = null;
   }
 
+  // --- AANGEPAST EFFECT: GEBIEDEN EEN GLOW GEVEN OP DE RAND ---
+  $effect(() => {
+    if (!mapLoaded || !map) return;
+
+    const areas = filteredPlaces.filter((p) => p.location_type === "area");
+
+    if (areas.length === 0) {
+      map.setPaintProperty("buurten-glow", "line-color", "transparent");
+      map.setPaintProperty("buurten-fill", "fill-color", "transparent");
+      return;
+    }
+
+    let matchExpr = ["match", ["get", "buurtnaam"]];
+    const seenGebieden = new Set();
+
+    areas.forEach((p) => {
+      if (!seenGebieden.has(p.gebied)) {
+        // kleur de gebieden rand glow altijd paars, ongeacht het domein
+        matchExpr.push(p.gebied, "#5d69fb");
+        seenGebieden.add(p.gebied);
+      }
+    });
+
+    // Fallback kleuren
+    matchExpr.push("transparent");
+
+    // Pas de kleur toe op de Glow en de Fill
+    map.setPaintProperty("buurten-glow", "line-color", matchExpr);
+    map.setPaintProperty("buurten-fill", "fill-color", matchExpr);
+  });
+
   // --- MARKERS UPDATEN ---
   $effect(() => {
     if (!map) return;
@@ -214,31 +346,47 @@
 
     filteredPlaces.forEach((place) => {
       const el = document.createElement("div");
-      el.className = "air-marker";
-      const domeinList = place.domeinen.split(";").map((d) => d.trim());
+      const isArea = place.location_type === "area";
 
-      let iconsHtml = "";
-      domeinList.forEach((d) => {
-        const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
-        const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
-        iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
-      });
-      el.innerHTML = iconsHtml;
+      // Gebruik specifieke class afhankelijk van punt/gebied
+      el.className = isArea ? "air-area-marker" : "air-marker";
+      const domeinList = (place.domeinen || "").split(";").map((d) => d.trim());
 
-      if (visualMode === "gebied") {
-        const gebiedKey = place.gebied || "default";
-        el.style.borderColor =
-          GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
-      } else if (visualMode === "koepel") {
-        const koepelKey =
-          (place.koepels || "").split(";").map((k) => k.trim())[0] || "default";
-        el.style.borderColor =
-          KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
+      if (isArea) {
+        // --- AREA MARKER: Alleen het eerste icoon in het groot, zonder witte achtergrond ---
+        const firstDomein = domeinList[0];
+        const iconClass = DOMEIN_ICONS[firstDomein] || DOMEIN_ICONS.default;
+        const iconColor = DOMEIN_COLORS[firstDomein] || DOMEIN_COLORS.default;
+        // Een mooi vurig / opvallend drop-shadow zodat ie goed afsteekt op de gekleurde map
+        el.innerHTML = `<i class="ph ${iconClass}" style="color: ${iconColor}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));"></i>`;
       } else {
-        el.style.borderColor = "#737ac6";
-      }
-      el.style.backgroundColor = "#ffffff";
+        // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
+        let iconsHtml = "";
+        domeinList.forEach((d) => {
+          const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
+          const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
+          iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
+        });
+        el.innerHTML = iconsHtml;
 
+        // Rand-kleuren op basis van UI toggle
+        if (visualMode === "gebied") {
+          const gebiedKey = place.gebied || "default";
+          el.style.borderColor =
+            GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
+        } else if (visualMode === "koepel") {
+          const koepelKey =
+            (place.koepels || "").split(";").map((k) => k.trim())[0] ||
+            "default";
+          el.style.borderColor =
+            KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
+        } else {
+          el.style.borderColor = "#737ac6";
+        }
+        el.style.backgroundColor = "#ffffff";
+      }
+
+      // --- CLICK EVENT (Voor beide gelijk) ---
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (activeMarkerElement)
@@ -246,6 +394,7 @@
         selectedPlace = place;
         activeMarkerElement = el;
         el.classList.add("active-glow");
+
         const isMobile = window.innerWidth <= 900;
         const sidebarWidth = 280;
         const popupWidth = 600;
@@ -282,6 +431,15 @@
   >
     <div class="brand">Initiatievenkaart</div>
 
+    <div class="search-group">
+      <input
+        type="search"
+        class="search-input"
+        placeholder="Zoek op initiatiefnaam"
+        bind:value={searchQuery}
+      />
+    </div>
+
     <div class="accordion">
       <button class="accordion-header" onclick={() => toggleSection("info")}>
         <span>Informatie</span>
@@ -289,12 +447,14 @@
       </button>
       {#if openSections.info}
         <div class="accordion-content">
-          <p>Informatie over de initiatieven in Rotterdam.</p>
+          <p>
+            In de kaart zie je initiatieven met een plek en initiatieven die
+            geen plek hebben maar opereren in een gebied.
+          </p>
           <button
             class="image-button"
             onclick={() => (enlargedImage = "Waardebloem.png")}
             title="klik om te vergroten"
-            aria-label="Vergroten Waardebloem afbeelding"
           >
             <img
               src="Waardebloem.png"
@@ -340,7 +500,7 @@
       </button>
       {#if openSections.gebied}
         <div class="accordion-content">
-          <div class="visual-toggle-container">
+          <!-- <div class="visual-toggle-container">
             <span class="toggle-text">Toon kleuren per gebied</span>
             <label class="switch">
               <input
@@ -350,7 +510,7 @@
               />
               <span class="slider"></span>
             </label>
-          </div>
+          </div> -->
           <hr class="separator" />
           {#each uniqueGebieden as gebied}
             <label class="filter-item">
@@ -372,43 +532,29 @@
       {/if}
     </div>
 
-    <div class="accordion">
-      <button class="accordion-header" onclick={() => toggleSection("koepel")}>
-        <span>Koepels</span>
-        <span class="icon">{openSections.koepel ? "−" : "+"}</span>
-      </button>
-      {#if openSections.koepel}
-        <div class="accordion-content">
-          <div class="visual-toggle-container">
-            <span class="toggle-text">Toon kleuren per koepel</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                checked={visualMode === "koepel"}
-                onchange={() => handleVisualToggle("koepel")}
-              />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <hr class="separator" />
-          {#each uniqueKoepels as koepel}
-            <label class="filter-item">
-              <input
-                type="checkbox"
-                checked={selectedKoepels.includes(koepel)}
-                onchange={() =>
-                  (selectedKoepels = toggleFilter(selectedKoepels, koepel))}
-              />
-              <span class="filter-text">{koepel}</span>
-              <span
-                class="color-swatch"
-                style="background-color: {KOEPEL_COLORS[koepel] ||
-                  KOEPEL_COLORS.default}"
-              ></span>
-            </label>
-          {/each}
-        </div>
-      {/if}
+    <div class="location-filter">
+      <label class="filter-item">
+        <input
+          type="checkbox"
+          checked={showOnlyPoints}
+          onchange={() => {
+            showOnlyPoints = true;
+            showAll = false;
+          }}
+        />
+        <span>Toon alleen plekken</span>
+      </label>
+      <label class="filter-item">
+        <input
+          type="checkbox"
+          checked={showAll}
+          onchange={() => {
+            showOnlyPoints = false;
+            showAll = true;
+          }}
+        />
+        <span>Toon alle initiatieven</span>
+      </label>
     </div>
 
     <div class="stats">
@@ -451,7 +597,7 @@
           <div class="popup-info-row">
             <span class="label">Domeinen</span>
             <div class="popup-tags">
-              {#each selectedPlace.domeinen.split(";") as d}
+              {#each (selectedPlace.domeinen || "").split(";") as d}
                 <span
                   class="p-tag"
                   style="background-color: {DOMEIN_COLORS[d.trim()] ||
@@ -491,7 +637,6 @@
     top: 0;
     left: 0;
   }
-
   .sidebar {
     width: 280px;
     height: 100%;
@@ -506,34 +651,29 @@
     position: relative;
   }
 
-  /* MOBILE-SPECIFIC OVERRIDES */
   @media (max-width: 900px) {
     .sidebar {
       position: fixed;
-      top: auto; /* Remove top pin */
-      bottom: 0; /* Pin to bottom */
+      top: auto;
+      bottom: 0;
       left: 0;
       width: 100%;
-      height: auto; /* Shrink to titles */
-      max-height: 70vh; /* Don't cover whole map */
+      height: auto;
+      max-height: 70vh;
       border-right: none;
       border-top: 1px solid rgba(0, 0, 0, 0.1);
       box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
       z-index: 2000;
     }
-
-    /* Hide non-accordion elements on mobile to keep it slim */
     .brand,
     .stats,
     .sidebar-collapse {
       display: none !important;
     }
-
     .accordion-content {
-      max-height: 40vh; /* Limit content height */
+      max-height: 40vh;
       overflow-y: auto;
     }
-
     .fixed-air-popup {
       top: 16px !important;
       right: unset !important;
@@ -544,7 +684,6 @@
     }
   }
 
-  /* --- REST OF YOUR ORIGINAL STYLING --- */
   .brand {
     padding: 24px 20px;
     font-weight: 900;
@@ -554,18 +693,37 @@
     background-color: #fdfaf0;
     text-align: center;
   }
-
+  .location-filter {
+    padding: 16px 20px;
+    border-bottom: 1px solid #e0ddd5;
+    background: #fdfaf0;
+  }
+  .search-group {
+    margin-bottom: 12px;
+  }
+  .search-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d8d2c8;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 0.95rem;
+    color: #333;
+    box-sizing: border-box;
+  }
+  .search-input:focus {
+    outline: none;
+    border-color: #5d69fb;
+    box-shadow: 0 0 0 3px rgba(93, 105, 251, 0.15);
+  }
   .accordion {
     border-bottom: 1px solid #e0ddd5;
     background: #fdfaf0;
     transition: background-color 0.2s ease;
   }
-
-  /* Gekleurde achtergrond als een sectie open staat */
   .accordion:has(.accordion-content) {
-    background: #fdfaf0; /* Matcht met de lichte hover-kleur van de popup */
+    background: #fdfaf0;
   }
-
   .accordion-header {
     width: 100%;
     padding: 16px 20px;
@@ -583,29 +741,24 @@
     color: #5d69fb;
     text-align: left;
   }
-
   .accordion-header:hover {
     background: rgba(132, 80, 255, 0.05);
   }
-
   .accordion-header .icon {
     font-size: 1.1rem;
     font-weight: normal;
     color: #999;
   }
-
   .accordion-content {
     padding: 0 20px 20px 20px;
     text-align: left;
   }
-
   .accordion-content p {
     font-size: 0.8rem;
     color: #666;
     line-height: 1.4;
     margin: 0;
   }
-
   .filter-item {
     display: flex;
     align-items: center;
@@ -617,13 +770,10 @@
     cursor: pointer;
     text-align: left;
   }
-
-  /* Subtiele hiërarchie-labeling binnen de sidebar content */
   .filter-text {
     flex-grow: 1;
     text-align: left;
   }
-
   .stats {
     margin-top: auto;
     padding: 16px 20px;
@@ -635,42 +785,35 @@
     background: #fdfaf0;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .stats strong {
     color: #5d69fb;
     font-size: 0.85rem;
   }
-
   input[type="checkbox"] {
     accent-color: #5d69fb;
   }
-
   .visual-toggle-container {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
   }
-
   .toggle-text {
     font-size: 0.75rem;
     font-weight: bold;
     color: #666;
   }
-
   .switch {
     position: relative;
     display: inline-block;
     width: 34px;
     height: 20px;
   }
-
   .switch input {
     opacity: 0;
     width: 0;
     height: 0;
   }
-
   .slider {
     position: absolute;
     cursor: pointer;
@@ -682,7 +825,6 @@
     transition: 0.4s;
     border-radius: 20px;
   }
-
   .slider:before {
     position: absolute;
     content: "";
@@ -694,29 +836,24 @@
     transition: 0.4s;
     border-radius: 50%;
   }
-
   input:checked + .slider {
     background-color: #5d69fb;
   }
-
   input:checked + .slider:before {
     transform: translateX(14px);
   }
-
   .separator {
     border: 0;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
     margin: 12px 0;
   }
-
   .color-swatch {
     width: 12px;
     height: 12px;
     display: inline-block;
-    border-radius: 3px; /* Matchend met de p-tags uit de popup */
+    border-radius: 3px;
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
-
   .map-container {
     flex-grow: 1;
     height: 100%;
@@ -737,49 +874,39 @@
     animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1);
     font-family: "Helvetica", Arial, sans-serif;
     text-align: left;
-    overflow: hidden; /* Cruciaal: houdt de paarse balk binnen de border-radius */
+    overflow: hidden;
     border: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .popup-top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background-color: #5d69fb; /* AIR Paars */
+    background-color: #5d69fb;
     gap: 12px;
-
-    /* Vaste hoogte: 2.8rem voor de tekst + 24px padding = ~68px hoog */
-    /* Dit is hoog genoeg voor exact 2 regels tekst */
     min-height: 68px;
     box-sizing: border-box;
   }
-
   .popup-title {
     margin: 0;
     font-size: 1.1rem;
     color: #ffffff;
     font-weight: 800;
     line-height: 1.2;
-    color: #ffffff; /* Wit */
     flex-grow: 1;
-
-    /* Zorgt dat de tekst netjes verdeeld wordt over max 2 regels */
     display: -webkit-box;
     line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-
-  /* Vierkante witte sluitknop (Perfect gecentreerd) */
   .close-btn {
     background: #ffffff;
     border: none;
-    font-size: 22px; /* Iets groter kruisje vult het blokje mooier op */
-    font-family: Arial, sans-serif; /* Arial heeft een heel symmetrisch kruisje */
+    font-size: 22px;
+    font-family: Arial, sans-serif;
     cursor: pointer;
-    color: #5d69fb; /* Paars kruisje */
+    color: #5d69fb;
     width: 28px;
     height: 28px;
     display: flex;
@@ -788,25 +915,19 @@
     border-radius: 4px;
     transition: all 0.2s;
     padding: 0;
-    flex-shrink: 0; /* Voorkomt dat het knopje platgedrukt wordt */
-
-    /* Reset voor vreemde browser-lijnhéritages */
+    flex-shrink: 0;
     line-height: 0;
   }
-
   .close-btn:hover {
     background-color: #fdfaf0;
     color: #1a1a1a;
   }
-
   .air-popup {
     padding: 16px;
   }
-
   .popup-info-row {
     margin-bottom: 14px;
   }
-
   .popup-info-row .label {
     font-weight: bold;
     color: #999;
@@ -816,13 +937,11 @@
     display: block;
     margin-bottom: 4px;
   }
-
   .popup-value {
     font-size: 0.85rem;
     color: #333;
     font-weight: 500;
   }
-
   .popup-footer {
     margin-top: 16px;
     padding-top: 12px;
@@ -839,20 +958,7 @@
       transform: translateY(0);
     }
   }
-  /* SIDEBAR KLEUREN */
-  .color-swatch {
-    width: 12px;
-    height: 12px;
-    display: inline-block;
-    margin-left: auto;
-    border: 1px solid rgba(0, 0, 0, 0.05);
-  }
-  .filter-text {
-    flex-grow: 1;
-    text-align: left;
-  }
 
-  /* TAGS EN LINKS */
   .p-tag {
     font-size: 9px;
     padding: 3px 6px;
@@ -865,13 +971,11 @@
     display: inline-block;
     border-radius: 5px;
   }
-
   .popup-tags {
     display: flex;
     flex-wrap: wrap;
     margin-top: 8px;
   }
-
   .popup-link {
     display: inline-block;
     font-size: 11px;
@@ -886,34 +990,30 @@
     background: #fdfaf0;
   }
 
-  /* MARKERS EN GLOW EFFECT */
+  /* POINT MARKERS (Oude stijl met border) */
   :global(.air-marker) {
-    min-width: 26px; /* Basisbreedte voor 1 icoon */
+    min-width: 26px;
     height: 26px;
-    border: 2px solid #737ac6; /* Paarse omlijning maakt het witte rondje knallend */
-    border-radius: 13px; /* Zorgt dat het een pilvorm wordt als er meer iconen bijkomen */
+    border: 2px solid #737ac6;
+    border-radius: 13px;
     cursor: pointer;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
     background: #ffffff;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 2px; /* Ruimte tussen icoontjes */
+    gap: 2px;
     padding: 0 4px;
     box-sizing: border-box;
   }
-
   :global(.air-marker i) {
     font-size: 14px;
     line-height: 1;
   }
-
   :global(.air-marker:hover) {
-    transform: scale(1.15); /* Subtiel groter maken ipv harde px-verandering */
+    transform: scale(1.15);
     z-index: 1000;
   }
-
-  /* Actieve marker */
   :global(.air-marker.active-glow) {
     z-index: 1001;
     border: 2.5px solid #5d69fb;
@@ -923,7 +1023,23 @@
       0 2px 6px rgba(0, 0, 0, 0.2);
   }
 
-  /* NIEUW: Icoontje in de sidebar */
+  /* AREA MARKERS (Nieuw: Alleen groot icon in het midden van het gebied) */
+  :global(.air-area-marker) {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  :global(.air-area-marker:hover) {
+    transform: scale(1.2);
+    z-index: 1000;
+  }
+  /* Bij active krijgt het icoon de welbekende paarse glow via een CSS filter op de icon */
+  :global(.air-area-marker.active-glow i) {
+    filter: drop-shadow(0 0 8px rgba(132, 80, 255, 0.8)) !important;
+    transform: scale(1.1);
+  }
+
   :global(.sidebar-icon) {
     font-size: 16px;
     width: 20px;
@@ -938,11 +1054,9 @@
     display: block;
     width: 100%;
   }
-
   .image-button:hover img {
     opacity: 0.9;
   }
-
   .image-modal {
     position: fixed;
     top: 0;
@@ -956,7 +1070,6 @@
     z-index: 3000;
     cursor: pointer;
   }
-
   .enlarged-image {
     max-width: 90vw;
     max-height: 90vh;
