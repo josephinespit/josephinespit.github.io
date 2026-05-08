@@ -15,6 +15,7 @@
   let markers = [];
   let visualMode = $state("domein");
 
+  /** @type {any} */
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
   let enlargedImage = $state(null);
@@ -43,7 +44,7 @@
           source: "rotterdam-buurten",
           paint: {
             "fill-color": "#000",
-            "fill-opacity": 0.02,
+            "fill-opacity": 0.2,
           },
         },
         "watername_ocean",
@@ -73,8 +74,8 @@
           source: "rotterdam-buurten",
           paint: {
             "line-color": "#5d69fb",
-            "line-width": 2,
-            "line-opacity": 0.3,
+            "line-width": 1,
+            "line-opacity": 0.2,
           },
         },
         "watername_ocean",
@@ -90,37 +91,16 @@
 
   // --- CONFIGURATIES ---
   const DOMEIN_COLORS = {
-    Werken: "#D4D4D4",
-    Werkplaats: "#A1A1A1",
-    Cultuur: "#5d69fb",
-    Groen: "#2D6A4F",
-    Voedsel: "#E76F51",
-    Circulair: "#6C5B7B",
-    Energie: "#FFB703",
-    Klimaat: "#4EA8DE",
-    Zorg: "#E63946",
-    Educatie: "#B5A900",
-    Wonen: "#D81B60",
-    Community: "#0081A7",
-    Mobiliteit: "#9A031E",
+    Wonen: "#ba2585",
+    Welzijn: "#804895",
+    Cultuur: "#3c529e",
+    Klimaat: "#86ccdf",
+    Voedsel: "#78bc84",
+    Groen: "#89c05c",
+    Circulair: "#efb000",
+    Mobiliteit: "#d16c11",
+    Energie: "#af232d",
     default: "#5d69fb",
-  };
-
-  const DOMEIN_ICONS = {
-    Werken: "ph-briefcase",
-    Werkplaats: "ph-hammer",
-    Cultuur: "ph-paint-brush-broad",
-    Groen: "ph-tree",
-    Voedsel: "ph-fork-knife",
-    Circulair: "ph-recycle",
-    Energie: "ph-lightning",
-    Klimaat: "ph-cloud-sun",
-    Zorg: "ph-heartbeat",
-    Educatie: "ph-graduation-cap",
-    Wonen: "ph-house",
-    Community: "ph-users-three",
-    Mobiliteit: "ph-car",
-    default: "ph-map-pin",
   };
 
   const GEBIED_COLORS = {
@@ -355,17 +335,12 @@
       if (isArea) {
         // --- AREA MARKER: Alleen het eerste icoon in het groot, zonder witte achtergrond ---
         const firstDomein = domeinList[0];
-        const iconClass = DOMEIN_ICONS[firstDomein] || DOMEIN_ICONS.default;
-        const iconColor = DOMEIN_COLORS[firstDomein] || DOMEIN_COLORS.default;
-        // Een mooi vurig / opvallend drop-shadow zodat ie goed afsteekt op de gekleurde map
-        el.innerHTML = `<i class="ph ${iconClass}" style="color: ${iconColor}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));"></i>`;
+        el.innerHTML = `<img src="${firstDomein.toLowerCase()}.png" alt="${firstDomein}" style="width: 30px; height: 30px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));" onerror="this.src='default.png'">`;
       } else {
         // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
         let iconsHtml = "";
         domeinList.forEach((d) => {
-          const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
-          const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
-          iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
+          iconsHtml += `<img src="${d.toLowerCase()}.png" alt="${d}" style="width: 20px; height: 20px; margin: 2px 0px 0px;" onerror="this.src='default.png'">`;
         });
         el.innerHTML = iconsHtml;
 
@@ -482,11 +457,15 @@
                   (selectedDomeinen = toggleFilter(selectedDomeinen, domein))}
               />
               <span class="filter-text">{domein}</span>
-              <i
-                class="ph {DOMEIN_ICONS[domein] ||
-                  DOMEIN_ICONS.default} sidebar-icon"
-                style="color: {DOMEIN_COLORS[domein] || DOMEIN_COLORS.default}"
-              ></i>
+              <img
+                src="{domein.toLowerCase()}.png"
+                alt={domein}
+                class="sidebar-icon"
+                style="width: 20px; height: 20px;"
+                onerror={(e) => {
+                  e.target.src = "default.png";
+                }}
+              />
             </label>
           {/each}
         </div>
@@ -525,6 +504,45 @@
                 class="color-swatch"
                 style="background-color: {GEBIED_COLORS[gebied] ||
                   GEBIED_COLORS.default}"
+              ></span>
+            </label>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <div class="accordion">
+      <button class="accordion-header" onclick={() => toggleSection("koepel")}>
+        <span>Koepels</span>
+        <span class="icon">{openSections.koepel ? "−" : "+"}</span>
+      </button>
+      {#if openSections.koepel}
+        <div class="accordion-content">
+          <div class="visual-toggle-container">
+            <span class="toggle-text">Toon kleuren per koepel</span>
+            <label class="switch">
+              <input
+                type="checkbox"
+                checked={visualMode === "koepel"}
+                onchange={() => handleVisualToggle("koepel")}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <hr class="separator" />
+          {#each uniqueKoepels as koepel}
+            <label class="filter-item">
+              <input
+                type="checkbox"
+                checked={selectedKoepels.includes(koepel)}
+                onchange={() =>
+                  (selectedKoepels = toggleFilter(selectedKoepels, koepel))}
+              />
+              <span class="filter-text">{koepel}</span>
+              <span
+                class="color-swatch"
+                style="background-color: {KOEPEL_COLORS[koepel] ||
+                  KOEPEL_COLORS.default}"
               ></span>
             </label>
           {/each}
@@ -608,6 +626,23 @@
               {/each}
             </div>
           </div>
+
+          {#if selectedPlace.koepels}
+            <div class="popup-info-row">
+              <span class="label">Dit initiatief valt onder de koepel:</span>
+              <div class="popup-tags">
+                {#each selectedPlace.koepels.split(";") as koepel}
+                  <span
+                    class="p-tag"
+                    style="background-color: {KOEPEL_COLORS[koepel.trim()] ||
+                      KOEPEL_COLORS.default}"
+                  >
+                    {koepel.trim()}
+                  </span>
+                {/each}
+              </div>
+            </div>
+          {/if}
 
           {#if selectedPlace.website}
             <div class="popup-footer">
@@ -992,8 +1027,8 @@
 
   /* POINT MARKERS (Oude stijl met border) */
   :global(.air-marker) {
-    min-width: 26px;
-    height: 26px;
+    min-width: 30px;
+    height: 30px;
     border: 2px solid #737ac6;
     border-radius: 13px;
     cursor: pointer;
@@ -1005,6 +1040,14 @@
     gap: 2px;
     padding: 0 4px;
     box-sizing: border-box;
+  }
+  /* When there's only one icon, make it a perfect circle with vertical space */
+  :global(.air-marker:has(img:only-child)) {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    border-radius: 15px;
+    padding: 3px;
   }
   :global(.air-marker i) {
     font-size: 14px;
@@ -1021,6 +1064,10 @@
       0 0 0 3px #5d69fb33,
       0 0 15px 8px rgba(132, 80, 255, 0.15),
       0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+  /* Adjust active glow for single-icon circular markers */
+  :global(.air-marker.active-glow:has(img:only-child)) {
+    border: 3px solid #5d69fb;
   }
 
   /* AREA MARKERS (Nieuw: Alleen groot icon in het midden van het gebied) */
