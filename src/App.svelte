@@ -13,7 +13,9 @@
   let allPlaces = $state([]);
   let gebiedToCentroid = $state({});
   let markers = [];
+  let markerMap = new Map();
   let visualMode = $state("domein");
+  let allGeoFeatures = $state([]);
 
   /** @type {any} */
   let selectedPlace = $state(null);
@@ -44,42 +46,25 @@
           source: "rotterdam-buurten",
           paint: {
             "fill-color": "#000",
-            "fill-opacity": 0.2,
-          },
-        },
-        "watername_ocean",
-      );
-
-      // 2. NIEUW: De Glow laag (brede lijn met blur)
-      map.addLayer(
-        {
-          id: "buurten-glow",
-          type: "line",
-          source: "rotterdam-buurten",
-          paint: {
-            "line-color": "transparent", // Wordt dynamisch gezet
-            "line-width": 12, // Breedte van de glow
-            "line-blur": 8, // De zachtheid van de rand
-            "line-opacity": 0.6,
+            "fill-opacity": 0.5,
           },
         },
         "watername_ocean",
       );
 
       // 3. De scherpe outline laag
-      map.addLayer(
-        {
-          id: "buurten-outlines",
-          type: "line",
-          source: "rotterdam-buurten",
-          paint: {
-            "line-color": "#5d69fb",
-            "line-width": 1,
-            "line-opacity": 0.2,
-          },
-        },
-        "watername_ocean",
-      );
+      // map.addLayer(
+      //   {
+      //     id: "buurten-outlines",
+      //     type: "line",
+      //     source: "rotterdam-buurten",
+      //     paint: {
+      //       "line-color": "transparent", // <--- Altijd onzichtbaar
+      //       "line-width": 0.0,
+      //     },
+      //   },
+      //   "watername_ocean",
+      // );
 
       mapLoaded = true;
     });
@@ -104,15 +89,15 @@
   };
 
   const DOMEIN_ICONS = {
-    Wonen: "ph-house-simple",
+    Wonen: "ph-house",
     Welzijn: "ph-heartbeat",
-    Cultuur: "ph-palette",
-    Klimaat: "ph-cloud-rain",
-    Voedsel: "ph-carrot",
-    Groen: "ph-tree-evergreen",
-    Circulair: "ph-arrows-clockwise",
-    Mobiliteit: "ph-car-simple",
-    Energie: "ph-lightbulb",
+    Cultuur: "ph-paint-brush-broad",
+    Klimaat: "ph-cloud-sun",
+    Voedsel: "ph-fork-knife",
+    Groen: "ph-tree",
+    Circulair: "ph-recycle",
+    Mobiliteit: "ph-bicycle",
+    Energie: "ph-lightning",
     default: "ph-map-pin",
   };
 
@@ -179,10 +164,39 @@
   let selectedGebieden = $state([]);
   let selectedDomeinen = $state([]);
   let selectedKoepels = $state([]);
+  let clickedAreaGebieden = $state([]);
+
+  let hoveredAreaGebieden = $state([]);
 
   let showOnlyPoints = $state(false);
   let showAll = $state(true);
   let searchQuery = $state("");
+
+  function selectPlaceOnMap(place) {
+    if (activeMarkerElement)
+      activeMarkerElement.classList.remove("active-glow");
+    selectedPlace = place;
+    // Find the marker element for this place
+    const markerEntry = markerMap.get(place);
+    if (markerEntry) {
+      activeMarkerElement = markerEntry.element;
+      markerEntry.element.classList.add("active-glow");
+    }
+
+    const isMobile = window.innerWidth <= 900;
+    const sidebarWidth = 280;
+    const popupWidth = 200;
+    const offsetX = isMobile ? 0 : (sidebarWidth + popupWidth) / 2;
+    const offsetY = isMobile ? -5 : 0;
+
+    map.flyTo({
+      center: [place.longitude, place.latitude],
+      offset: [offsetX, offsetY],
+      essential: true,
+      speed: 0.2,
+      curve: 1.2,
+    });
+  }
 
   let uniqueGebieden = $derived(
     [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
@@ -193,11 +207,18 @@
   let uniqueDomeinen = $derived(
     [
       ...new Set(
-        allPlaces.flatMap((p) => p.domeinen?.split(";").map((d) => d.trim())),
+        allPlaces.flatMap((p) => [
+          ...new Set(p.domeinen?.split(";").map((d) => d.trim())),
+        ]),
       ),
     ]
       .filter(Boolean)
-      .sort(),
+      .sort((a, b) => {
+        const domeinOrder = Object.keys(DOMEIN_COLORS);
+        const aIndex = domeinOrder.indexOf(a);
+        const bIndex = domeinOrder.indexOf(b);
+        return aIndex - bIndex;
+      }),
   );
 
   let filteredPlaces = $derived(
@@ -208,24 +229,27 @@
       const matchesKoepel =
         selectedKoepels.length === 0 ||
         koepelValues.some((k) => selectedKoepels.includes(k));
-      const placeDomeinen = (p.domeinen || "").split(";").map((d) => d.trim());
+      const placeDomeinen = [
+        ...new Set((p.domeinen || "").split(";").map((d) => d.trim())),
+      ];
       const matchesDomein =
         selectedDomeinen.length === 0 ||
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
       const matchesLocation = showOnlyPoints
         ? p.location_type === "point"
         : true;
-      const matchesSearch =
-        searchQuery.trim().length === 0 ||
-        (p.name || "").toLowerCase().includes(searchQuery.trim().toLowerCase());
-      return (
-        matchesGebied &&
-        matchesKoepel &&
-        matchesDomein &&
-        matchesLocation &&
-        matchesSearch
-      );
+      return matchesGebied && matchesKoepel && matchesDomein && matchesLocation;
     }),
+  );
+
+  let searchSuggestions = $derived(
+    searchQuery.trim().length > 0
+      ? allPlaces.filter((p) =>
+          (p.name || "")
+            .toLowerCase()
+            .includes(searchQuery.trim().toLowerCase()),
+        )
+      : [],
   );
 
   function computeCentroid(geometry) {
@@ -254,6 +278,7 @@
     const csvString = await response.text();
     const geoResponse = await fetch("rotterdam-buurten.json");
     const geoData = await geoResponse.json();
+    allGeoFeatures = geoData.features;
 
     gebiedToCentroid = {};
     geoData.features.forEach((feature) => {
@@ -269,6 +294,20 @@
       dynamicTyping: true,
       complete: (results) => {
         allPlaces = results.data.filter((p) => p.latitude && p.longitude);
+
+        // Breid alle area-initiatieven met gebied "Rotterdam" uit naar alle buurten.
+        const allBuurten = geoData.features
+          .map((feature) => feature.properties.buurtnaam)
+          .filter(Boolean)
+          .join("; ");
+        allPlaces.forEach((place) => {
+          if (
+            place.location_type === "area" &&
+            String(place.gebied).trim().toLowerCase() === "rotterdam"
+          ) {
+            place.gebied = allBuurten;
+          }
+        });
 
         // Update coordinates for area initiatives
         allPlaces.forEach((place) => {
@@ -298,36 +337,56 @@
       activeMarkerElement.classList.remove("active-glow");
     selectedPlace = null;
     activeMarkerElement = null;
+    clickedAreaGebieden = [];
   }
 
-  // --- AANGEPAST EFFECT: GEBIEDEN EEN GLOW GEVEN OP DE RAND ---
   $effect(() => {
     if (!mapLoaded || !map) return;
 
     const areas = filteredPlaces.filter((p) => p.location_type === "area");
+    const hoveredSet = new Set(hoveredAreaGebieden);
+    const clickedSet = new Set(clickedAreaGebieden);
 
+    // Als er geen areas zijn, alles onzichtbaar maken
     if (areas.length === 0) {
-      map.setPaintProperty("buurten-glow", "line-color", "transparent");
+      // map.setPaintProperty("buurten-glow", "line-color", "transparent");
       map.setPaintProperty("buurten-fill", "fill-color", "transparent");
+      // map.setPaintProperty("buurten-outlines", "line-color", "transparent");
       return;
     }
 
     let matchExpr = ["match", ["get", "buurtnaam"]];
-    const seenGebieden = new Set();
+    const gebiedCounts = new Map();
 
+    // Tel hoe vaak een buurt voorkomt (voor de basis-hittekaart look)
     areas.forEach((p) => {
-      if (!seenGebieden.has(p.gebied)) {
-        // kleur de gebieden rand glow altijd paars, ongeacht het domein
-        matchExpr.push(p.gebied, "#5d69fb");
-        seenGebieden.add(p.gebied);
-      }
+      const gebieden = p.gebied.split(";").map((g) => g.trim());
+      gebieden.forEach((gebied) => {
+        gebiedCounts.set(gebied, (gebiedCounts.get(gebied) || 0) + 1);
+      });
     });
 
-    // Fallback kleuren
+    gebiedCounts.forEach((count, gebied) => {
+      const isClicked = clickedSet.has(gebied);
+      const isHovered = hoveredSet.has(gebied);
+
+      let opacity;
+      if (isClicked) {
+        opacity = 1.0; // <--- VOLLEDIG OPAAK (geen doorkijk)
+      } else if (isHovered) {
+        opacity = 0.7; // Iets feller bij hover
+      } else {
+        // Basis opacity op basis van hoeveel initiatieven er zijn
+        opacity = Math.min(0.2 + (count - 1) * 0.15, 0.5);
+      }
+
+      // We gebruiken de paarse kleur van je huisstijl (#5d69fb)
+      matchExpr.push(gebied, `rgba(93, 105, 251, ${opacity})`);
+    });
+
+    // Default kleur als er geen initiatief is
     matchExpr.push("transparent");
 
-    // Pas de kleur toe op de Glow en de Fill
-    map.setPaintProperty("buurten-glow", "line-color", matchExpr);
     map.setPaintProperty("buurten-fill", "fill-color", matchExpr);
   });
 
@@ -336,37 +395,56 @@
     if (!map) return;
     markers.forEach((m) => m.remove());
     markers = [];
+    markerMap.clear();
 
-    filteredPlaces.forEach((place) => {
+    // STAP 1: Sorteer zodat 'area' altijd eerst komt (onderop de stapel)
+    const sortedPlaces = [...filteredPlaces].sort((a, b) => {
+      if (a.location_type === "area" && b.location_type === "point") return -1;
+      if (a.location_type === "point" && b.location_type === "area") return 1;
+      return 0;
+    });
+
+    const areaPositionMap = new Map();
+    sortedPlaces.forEach((place) => {
+      if (place.location_type !== "area") return;
+      const key = `${place.longitude}|${place.latitude}`;
+      const list = areaPositionMap.get(key) || [];
+      list.push(place);
+      areaPositionMap.set(key, list);
+    });
+
+    sortedPlaces.forEach((place) => {
       const el = document.createElement("div");
       const isArea = place.location_type === "area";
 
-      // Gebruik specifieke class afhankelijk van punt/gebied
       el.className = isArea ? "air-area-marker" : "air-marker";
-      const domeinList = (place.domeinen || "").split(";").map((d) => d.trim());
+      const domeinList = [
+        ...new Set((place.domeinen || "").split(";").map((d) => d.trim())),
+      ];
 
       if (isArea) {
         // --- AREA MARKER: Alleen het eerste icoon in het groot, zonder witte achtergrond ---
         const firstDomein = domeinList[0];
-        const iconColor = DOMEIN_COLORS[firstDomein] || DOMEIN_COLORS.default;
-        if (firstDomein === "Energie") {
-          el.innerHTML = `<img src="lampje.png" alt="Energie" style="width: 30px; height: 30px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));">`;
-        } else {
-          const iconClass = DOMEIN_ICONS[firstDomein] || DOMEIN_ICONS.default;
-          // Een mooi vurig / opvallend drop-shadow zodat ie goed afsteekt op de gekleurde map
-          el.innerHTML = `<i class="ph ${iconClass}" style="color: ${iconColor}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));"></i>`;
-        }
+        const iconClass = DOMEIN_ICONS[firstDomein] || DOMEIN_ICONS.default;
+        // Paars transparante kleur zodat het mengt met de gebiedskleur
+        const iconColor = "#ffffff";
+        el.innerHTML = `<i class="ph ${iconClass}" style="color: ${iconColor}; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));"></i>`;
+        const areaGebieden = (place.gebied || "")
+          .split(";")
+          .map((g) => g.trim());
+        el.addEventListener("mouseenter", () => {
+          hoveredAreaGebieden = areaGebieden.filter(Boolean);
+        });
+        el.addEventListener("mouseleave", () => {
+          hoveredAreaGebieden = [];
+        });
       } else {
         // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
         let iconsHtml = "";
         domeinList.forEach((d) => {
           const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
-          if (d === "Energie") {
-            iconsHtml += `<img src="lampje.png" alt="Energie" style="width: 16px; height: 16px; margin: 0 2px;">`;
-          } else {
-            const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
-            iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
-          }
+          const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
+          iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
         });
         el.innerHTML = iconsHtml;
 
@@ -387,7 +465,6 @@
         el.style.backgroundColor = "#ffffff";
       }
 
-      // --- CLICK EVENT (Voor beide gelijk) ---
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (activeMarkerElement)
@@ -398,29 +475,112 @@
 
         const isMobile = window.innerWidth <= 900;
         const sidebarWidth = 280;
-        const popupWidth = 600;
-        const offsetX = isMobile ? 0 : (sidebarWidth - popupWidth) / 2;
-        const offsetY = isMobile ? -5 : 0;
 
-        map.flyTo({
-          center: [place.longitude, place.latitude],
-          offset: [offsetX, offsetY],
-          essential: true,
-          speed: 0.2,
-          curve: 1.2,
-        });
+        // Bereken padding zodat de buurt niet achter de UI verdwijnt
+        const padding = isMobile
+          ? { top: 80, bottom: 350, left: 20, right: 20 }
+          : { top: 60, bottom: 60, left: 60, right: 60 };
+
+        if (isArea) {
+          const areaBounds = getAreaBounds(place.gebied);
+
+          if (areaBounds && !areaBounds.isEmpty()) {
+            // OPTIE A: We hebben de buurtgrenzen gevonden -> Zoom naar de hele buurt
+            map.fitBounds(areaBounds, {
+              padding: padding,
+              speed: 0.8,
+              curve: 1.2,
+              essential: true,
+            });
+          } else {
+            // OPTIE B: Fallback -> Zoom gewoon op het icoontje als de buurtnaam niet matcht
+            map.flyTo({
+              center: [place.longitude, place.latitude],
+              zoom: 14,
+              padding: padding,
+              speed: 0.8,
+              essential: true,
+            });
+          }
+
+          const areaGebieden = (place.gebied || "")
+            .split(";")
+            .map((g) => g.trim());
+          clickedAreaGebieden = areaGebieden.filter(Boolean);
+        } else {
+          // POINT INITIATIEF
+          map.flyTo({
+            center: [place.longitude, place.latitude],
+            zoom: 15.5,
+            padding: padding,
+            speed: 0.8,
+            essential: true,
+          });
+          clickedAreaGebieden = [];
+        }
       });
 
-      const m = new maplibregl.Marker({ element: el })
+      const offset = /** @type {[number, number]} */ ([0, 0]);
+      if (isArea) {
+        const key = `${place.longitude}|${place.latitude}`;
+        const list = areaPositionMap.get(key) || [];
+        if (list.length > 1) {
+          const index = list.indexOf(place);
+          const radius = 16; // distance from center in px
+          // Rotate so first petal is at top; space evenly around the circle
+          const angle = (2 * Math.PI * index) / list.length - Math.PI / 2;
+          offset[0] = Math.cos(angle) * radius;
+          offset[1] = Math.sin(angle) * radius; // positive = down in MapLibre
+        }
+      }
+      const m = new maplibregl.Marker({ element: el, offset })
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
+
+      // STAP 2: Forceer de z-index via de Marker methode voor extra zekerheid
+      // Points krijgen 100, Areas krijgen 1
+      if (isArea) m.getElement().style.zIndex = "1";
+      // Leave point markers without an inline z-index so CSS :hover can take effect
+
       markers.push(m);
+      markerMap.set(place, { element: el, marker: m });
     });
   });
 
   function toggleFilter(list, value) {
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
+  }
+
+  // --- HULPFUNCTIE VOOR ZOOM ---
+  function getAreaBounds(gebiedString) {
+    // Check of de data wel geladen is
+    if (!gebiedString || !allGeoFeatures || allGeoFeatures.length === 0)
+      return null;
+
+    const namen = gebiedString.split(";").map((g) => g.trim().toLowerCase());
+    const bounds = new maplibregl.LngLatBounds();
+    let found = false;
+
+    allGeoFeatures.forEach((feature) => {
+      const buurtNaam = feature.properties.buurtnaam?.toLowerCase();
+      if (namen.includes(buurtNaam)) {
+        const coords = feature.geometry.coordinates;
+
+        // Helper om door geneste coördinaten te lopen (Polygon/MultiPolygon)
+        const extendRecursive = (c) => {
+          if (typeof c[0] === "number") {
+            bounds.extend(c);
+            found = true;
+          } else {
+            c.forEach(extendRecursive);
+          }
+        };
+        extendRecursive(coords);
+      }
+    });
+
+    return found ? bounds : null;
   }
 </script>
 
@@ -439,6 +599,21 @@
         placeholder="Zoek op initiatiefnaam"
         bind:value={searchQuery}
       />
+      {#if searchSuggestions.length > 0}
+        <ul class="search-suggestions">
+          {#each searchSuggestions as suggestion}
+            <li>
+              <button
+                class="search-suggestion"
+                onclick={() => selectPlaceOnMap(suggestion)}
+                type="button"
+              >
+                {suggestion.name}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
 
     <div class="accordion">
@@ -637,7 +812,9 @@
           <div class="popup-info-row">
             <span class="label">Domeinen</span>
             <div class="popup-tags">
-              {#each (selectedPlace.domeinen || "").split(";") as d}
+              {#each [...new Set((selectedPlace.domeinen || "")
+                    .split(";")
+                    .map((d) => d.trim()))] as d}
                 <span
                   class="p-tag"
                   style="background-color: {DOMEIN_COLORS[d.trim()] ||
@@ -757,6 +934,7 @@
   }
   .search-group {
     margin-bottom: 12px;
+    position: relative;
   }
   .search-input {
     width: 100%;
@@ -770,8 +948,38 @@
   }
   .search-input:focus {
     outline: none;
-    border-color: #5d69fb;
+    /* border-color: #5d69fb; */
     box-shadow: 0 0 0 3px rgba(93, 105, 251, 0.15);
+  }
+  .search-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #d8d2c8;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  .search-suggestion {
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #333;
+  }
+  .search-suggestion:hover {
+    background: #f5f5f5;
   }
   .accordion {
     border-bottom: 1px solid #e0ddd5;
@@ -1062,6 +1270,8 @@
     gap: 2px;
     padding: 0 4px;
     box-sizing: border-box;
+    z-index: 100 !important;
+    /* transition: transform 0.15s ease, box-shadow 0.15s ease; */
   }
   :global(.air-marker i) {
     font-size: 14px;
@@ -1069,7 +1279,7 @@
   }
   :global(.air-marker:hover) {
     transform: scale(1.15);
-    z-index: 1000;
+    z-index: 1000 !important;
   }
   :global(.air-marker.active-glow) {
     z-index: 1001;
@@ -1081,15 +1291,19 @@
   }
 
   /* AREA MARKERS (Nieuw: Alleen groot icon in het midden van het gebied) */
+  /* AREA MARKERS */
   :global(.air-area-marker) {
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 10;
   }
+
   :global(.air-area-marker:hover) {
+    /* NIEUW: Wordt 40% groter en komt naar de voorgrond */
     transform: scale(1.2);
-    z-index: 1000;
+    /* z-index: 500; */
   }
   /* Bij active krijgt het icoon de welbekende paarse glow via een CSS filter op de icon */
   :global(.air-area-marker.active-glow i) {
