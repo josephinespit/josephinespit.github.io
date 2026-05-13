@@ -177,14 +177,19 @@
   }
 
   function activatePlaceOnMap(place) {
-    if (activeMarkerElement)
+    if (activeMarkerElement) {
       activeMarkerElement.classList.remove("active-glow");
+      // Reset z-index when removing active state
+      activeMarkerElement.style.zIndex = "";
+    }
 
     selectedPlace = place;
     const markerEntry = markerMap.get(place);
     if (markerEntry) {
       activeMarkerElement = markerEntry.element;
       markerEntry.element.classList.add("active-glow");
+      // Move active marker to front with highest z-index
+      markerEntry.element.style.zIndex = "9999";
     } else {
       activeMarkerElement = null;
     }
@@ -201,8 +206,11 @@
     if (place.location_type === "area") {
       const areaBounds = getAreaBounds(place.gebied);
       if (areaBounds && !areaBounds.isEmpty()) {
+        const areaPadding = isMobile
+          ? { top: 80, bottom: 350, left: 20, right: 20 }
+          : { top: 60, bottom: 60, left: 100, right: 250 };
         map.fitBounds(areaBounds, {
-          padding,
+          padding: areaPadding,
           speed: 0.8,
           curve: 1.2,
           essential: true,
@@ -407,8 +415,10 @@
   });
 
   function closePopup() {
-    if (activeMarkerElement)
+    if (activeMarkerElement) {
       activeMarkerElement.classList.remove("active-glow");
+      activeMarkerElement.style.zIndex = "";
+    }
     selectedPlace = null;
     activeMarkerElement = null;
     clickedAreaGebieden = [];
@@ -445,13 +455,14 @@
       const isHovered = hoveredSet.has(gebied);
 
       let opacity;
-      if (isClicked) {
-        opacity = 1.0; // <--- VOLLEDIG OPAAK (geen doorkijk)
-      } else if (isHovered) {
-        opacity = 0.9; // Iets feller bij hover
+      if (isHovered) {
+        opacity = 0.5; // Visible on hover
       } else {
-        // Basis opacity op basis van hoeveel initiatieven er zijn
-        opacity = Math.min(0.0 + (count - 1) * 0.15, 0.5);
+        opacity = 0.0; // Invisible when not hovering
+      }
+
+      if (isClicked) {
+        opacity = 0.5; // Visible when clicked
       }
 
       // We gebruiken de paarse kleur van je huisstijl (#5d69fb)
@@ -462,6 +473,7 @@
     matchExpr.push("transparent");
 
     map.setPaintProperty("buurten-fill", "fill-color", matchExpr);
+    // Add smooth transition to opacity changes
   });
 
   // --- MARKERS UPDATEN ---
@@ -505,7 +517,11 @@
         const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
         iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
       });
-      el.innerHTML = iconsHtml;
+      if (isArea) {
+        el.innerHTML = `<div class="area-marker-inner">${iconsHtml}</div>`;
+      } else {
+        el.innerHTML = iconsHtml;
+      }
 
       if (isArea) {
         // --- AREA MARKER: Same marker behavior as points, with purple bg and white border/icon ---
@@ -514,11 +530,48 @@
         const areaGebieden = (place.gebied || "")
           .split(";")
           .map((g) => g.trim());
+        const groupKey = `${place.longitude}|${place.latitude}`;
+        const groupList = areaPositionMap.get(groupKey) || [];
         el.addEventListener("mouseenter", () => {
           hoveredAreaGebieden = areaGebieden.filter(Boolean);
+          // Spread markers in circle on hover
+          groupList.forEach((placeInGroup, idx) => {
+            const markerEntry = markerMap.get(placeInGroup);
+            if (markerEntry) {
+              if (groupList.length > 1) {
+                const angle =
+                  (2 * Math.PI * idx) / groupList.length - Math.PI / 2;
+                const radius = 20;
+                const newOffset = [
+                  Math.cos(angle) * radius,
+                  Math.sin(angle) * radius,
+                ];
+                markerEntry.marker.setOffset(newOffset);
+
+                const inner =
+                  markerEntry.element.querySelector(".area-marker-inner");
+                if (inner) {
+                  inner.style.transform = "scale(1.08)";
+                }
+              }
+            }
+          });
         });
         el.addEventListener("mouseleave", () => {
           hoveredAreaGebieden = [];
+          // Stack markers on top of each other
+          groupList.forEach((placeInGroup) => {
+            const markerEntry = markerMap.get(placeInGroup);
+            if (markerEntry) {
+              markerEntry.marker.setOffset([0, 0]);
+
+              const inner =
+                markerEntry.element.querySelector(".area-marker-inner");
+              if (inner) {
+                inner.style.transform = "scale(1)";
+              }
+            }
+          });
         });
       } else {
         // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
@@ -545,16 +598,8 @@
 
       const offset = /** @type {[number, number]} */ ([0, 0]);
       if (isArea) {
-        const key = `${place.longitude}|${place.latitude}`;
-        const list = areaPositionMap.get(key) || [];
-        if (list.length > 1) {
-          const index = list.indexOf(place);
-          const radius = 16; // distance from center in px
-          // Rotate so first petal is at top; space evenly around the circle
-          const angle = (2 * Math.PI * index) / list.length - Math.PI / 2;
-          offset[0] = Math.cos(angle) * radius;
-          offset[1] = Math.sin(angle) * radius; // positive = down in MapLibre
-        }
+        // Area markers start stacked on top of each other (offset 0,0)
+        // They spread into a circle on hover (handled in mouseenter)
       }
       const m = new maplibregl.Marker({ element: el, offset })
         .setLngLat([place.longitude, place.latitude])
@@ -1161,7 +1206,7 @@
       0 10px 30px rgba(0, 0, 0, 0.1),
       5px 5px 0px rgba(132, 80, 255, 0.15);
     z-index: 2000;
-    animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1);
+    /* animation: popup-slide-in 0.3s cubic-bezier(0.1, 1, 0.1, 1); */
     font-family: "Helvetica", Arial, sans-serif;
     text-align: left;
     overflow: hidden;
@@ -1296,18 +1341,21 @@
     padding: 0 4px;
     box-sizing: border-box;
     z-index: 100 !important;
-    /* transition: transform 0.15s ease, box-shadow 0.15s ease; */
+
+    /* IMPORTANT: no transform transition */
+    transition:
+      box-shadow 0.25s ease,
+      border-color 0.25s ease;
   }
   :global(.air-marker i) {
     font-size: 14px;
     line-height: 1;
   }
   :global(.air-marker:hover) {
-    transform: scale(1.15);
     z-index: 1000 !important;
   }
   :global(.air-marker.active-glow) {
-    z-index: 1001;
+    z-index: 9999 !important;
     border: 2.5px solid #5d69fb;
     box-shadow:
       0 0 0 3px #5d69fb33,
@@ -1318,6 +1366,31 @@
   /* AREA MARKERS: Same marker styling as points, only color overrides */
   :global(.air-area-marker) {
     z-index: 20;
+
+    /* NO transform transition here */
+    transition: box-shadow 0.25s ease;
+  }
+
+  @keyframes area-fade-in {
+    from {
+      fill-opacity: 0;
+    }
+    to {
+      fill-opacity: 0.5;
+    }
+  }
+
+  :global(.area-marker-inner) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    height: 100%;
+
+    transition:
+      transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+      opacity 0.25s ease;
   }
 
   :global(.sidebar-icon) {
