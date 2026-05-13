@@ -46,7 +46,7 @@
           source: "rotterdam-buurten",
           paint: {
             "fill-color": "#000",
-            "fill-opacity": 0.5,
+            "fill-opacity": 0.9,
           },
         },
         "watername_ocean",
@@ -173,34 +173,83 @@
   let searchQuery = $state("");
 
   function selectPlaceOnMap(place) {
+    activatePlaceOnMap(place);
+  }
+
+  function activatePlaceOnMap(place) {
     if (activeMarkerElement)
       activeMarkerElement.classList.remove("active-glow");
+
     selectedPlace = place;
-    // Find the marker element for this place
     const markerEntry = markerMap.get(place);
     if (markerEntry) {
       activeMarkerElement = markerEntry.element;
       markerEntry.element.classList.add("active-glow");
+    } else {
+      activeMarkerElement = null;
     }
 
     const isMobile = window.innerWidth <= 900;
     const sidebarWidth = 280;
     const popupWidth = 200;
-    const offsetX = isMobile ? 0 : (sidebarWidth + popupWidth) / 2;
+    const offsetX = isMobile ? 0 : sidebarWidth - popupWidth * 2;
     const offsetY = isMobile ? -5 : 0;
+    const padding = isMobile
+      ? { top: 80, bottom: 350, left: 20, right: 20 }
+      : { top: 60, bottom: 60, left: 60, right: 60 };
 
-    map.flyTo({
-      center: [place.longitude, place.latitude],
-      offset: [offsetX, offsetY],
-      essential: true,
-      speed: 0.2,
-      curve: 1.2,
-    });
+    if (place.location_type === "area") {
+      const areaBounds = getAreaBounds(place.gebied);
+      if (areaBounds && !areaBounds.isEmpty()) {
+        map.fitBounds(areaBounds, {
+          padding,
+          speed: 0.8,
+          curve: 1.2,
+          essential: true,
+        });
+      } else {
+        map.flyTo({
+          center: [place.longitude, place.latitude],
+          zoom: 14,
+          padding,
+          speed: 0.8,
+          essential: true,
+        });
+      }
+
+      const areaGebieden = (place.gebied || "").split(";").map((g) => g.trim());
+      clickedAreaGebieden = areaGebieden.filter(Boolean);
+    } else {
+      map.flyTo({
+        center: [place.longitude, place.latitude],
+        offset: [offsetX, offsetY],
+        zoom: 15.5,
+        padding,
+        speed: 0.8,
+        essential: true,
+      });
+      clickedAreaGebieden = [];
+    }
   }
 
-  let uniqueGebieden = $derived(
-    [...new Set(allPlaces.map((p) => p.gebied))].filter(Boolean).sort(),
-  );
+  let uniqueGebieden = $derived.by(() => {
+    const gebieden = new Set();
+    allPlaces.forEach((p) => {
+      if (!p.gebied) return;
+      const parts = String(p.gebied)
+        .split(";")
+        .map((g) => g.trim())
+        .filter(Boolean);
+      if (parts.length === 1) {
+        // Single gebied -> add it
+        gebieden.add(parts[0]);
+      } else if (parts.length > 15) {
+        // More than 15 buurten -> add Rotterdam
+        gebieden.add("Rotterdam");
+      }
+    });
+    return [...gebieden].sort();
+  });
   let uniqueKoepels = $derived(
     [...new Set(allPlaces.map((p) => p.koepels))].filter(Boolean).sort(),
   );
@@ -223,8 +272,23 @@
 
   let filteredPlaces = $derived(
     allPlaces.filter((p) => {
-      const matchesGebied =
-        selectedGebieden.length === 0 || selectedGebieden.includes(p.gebied);
+      let matchesGebied = selectedGebieden.length === 0;
+      if (!matchesGebied) {
+        const parts = String(p.gebied)
+          .split(";")
+          .map((g) => g.trim())
+          .filter(Boolean);
+        const isMultiBuurt = parts.length > 15;
+        // Check if any selected filter matches
+        matchesGebied = selectedGebieden.some((selected) => {
+          if (selected === "Rotterdam") {
+            // Rotterdam matches if: 15+ buurten OR place has Rotterdam in it
+            return isMultiBuurt || parts.some((g) => g === "Rotterdam");
+          }
+          // Other gebieden: exact match on place
+          return selected === p.gebied;
+        });
+      }
       const koepelValues = (p.koepels || "").split(";").map((k) => k.trim());
       const matchesKoepel =
         selectedKoepels.length === 0 ||
@@ -270,6 +334,16 @@
       });
     }
     return null;
+  }
+
+  function formatGebiedLabel(gebied) {
+    if (!gebied) return "Rotterdam";
+    const parts = String(gebied)
+      .split(";")
+      .map((g) => g.trim())
+      .filter(Boolean);
+    if (parts.length > 15) return "Rotterdam";
+    return parts.join("; ");
   }
 
   // --- DATA INLADEN ---
@@ -374,10 +448,10 @@
       if (isClicked) {
         opacity = 1.0; // <--- VOLLEDIG OPAAK (geen doorkijk)
       } else if (isHovered) {
-        opacity = 0.7; // Iets feller bij hover
+        opacity = 0.9; // Iets feller bij hover
       } else {
         // Basis opacity op basis van hoeveel initiatieven er zijn
-        opacity = Math.min(0.2 + (count - 1) * 0.15, 0.5);
+        opacity = Math.min(0.0 + (count - 1) * 0.15, 0.5);
       }
 
       // We gebruiken de paarse kleur van je huisstijl (#5d69fb)
@@ -417,18 +491,26 @@
       const el = document.createElement("div");
       const isArea = place.location_type === "area";
 
-      el.className = isArea ? "air-area-marker" : "air-marker";
+      el.className = "air-marker";
+      if (isArea) el.classList.add("air-area-marker");
       const domeinList = [
         ...new Set((place.domeinen || "").split(";").map((d) => d.trim())),
       ];
 
+      let iconsHtml = "";
+      domeinList.forEach((d) => {
+        const iconColor = isArea
+          ? "#ffffff"
+          : DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
+        const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
+        iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
+      });
+      el.innerHTML = iconsHtml;
+
       if (isArea) {
-        // --- AREA MARKER: Alleen het eerste icoon in het groot, zonder witte achtergrond ---
-        const firstDomein = domeinList[0];
-        const iconClass = DOMEIN_ICONS[firstDomein] || DOMEIN_ICONS.default;
-        // Paars transparante kleur zodat het mengt met de gebiedskleur
-        const iconColor = "#ffffff";
-        el.innerHTML = `<i class="ph ${iconClass}" style="color: ${iconColor}; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));"></i>`;
+        // --- AREA MARKER: Same marker behavior as points, with purple bg and white border/icon ---
+        el.style.backgroundColor = "#5d69fb";
+        el.style.borderColor = "#ffffff";
         const areaGebieden = (place.gebied || "")
           .split(";")
           .map((g) => g.trim());
@@ -440,15 +522,6 @@
         });
       } else {
         // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
-        let iconsHtml = "";
-        domeinList.forEach((d) => {
-          const iconColor = DOMEIN_COLORS[d] || DOMEIN_COLORS.default;
-          const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
-          iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
-        });
-        el.innerHTML = iconsHtml;
-
-        // Rand-kleuren op basis van UI toggle
         if (visualMode === "gebied") {
           const gebiedKey = place.gebied || "default";
           el.style.borderColor =
@@ -467,57 +540,7 @@
 
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (activeMarkerElement)
-          activeMarkerElement.classList.remove("active-glow");
-        selectedPlace = place;
-        activeMarkerElement = el;
-        el.classList.add("active-glow");
-
-        const isMobile = window.innerWidth <= 900;
-        const sidebarWidth = 280;
-
-        // Bereken padding zodat de buurt niet achter de UI verdwijnt
-        const padding = isMobile
-          ? { top: 80, bottom: 350, left: 20, right: 20 }
-          : { top: 60, bottom: 60, left: 60, right: 60 };
-
-        if (isArea) {
-          const areaBounds = getAreaBounds(place.gebied);
-
-          if (areaBounds && !areaBounds.isEmpty()) {
-            // OPTIE A: We hebben de buurtgrenzen gevonden -> Zoom naar de hele buurt
-            map.fitBounds(areaBounds, {
-              padding: padding,
-              speed: 0.8,
-              curve: 1.2,
-              essential: true,
-            });
-          } else {
-            // OPTIE B: Fallback -> Zoom gewoon op het icoontje als de buurtnaam niet matcht
-            map.flyTo({
-              center: [place.longitude, place.latitude],
-              zoom: 14,
-              padding: padding,
-              speed: 0.8,
-              essential: true,
-            });
-          }
-
-          const areaGebieden = (place.gebied || "")
-            .split(";")
-            .map((g) => g.trim());
-          clickedAreaGebieden = areaGebieden.filter(Boolean);
-        } else {
-          // POINT INITIATIEF
-          map.flyTo({
-            center: [place.longitude, place.latitude],
-            zoom: 15.5,
-            padding: padding,
-            speed: 0.8,
-            essential: true,
-          });
-          clickedAreaGebieden = [];
-        }
+        activatePlaceOnMap(place);
       });
 
       const offset = /** @type {[number, number]} */ ([0, 0]);
@@ -539,7 +562,7 @@
 
       // STAP 2: Forceer de z-index via de Marker methode voor extra zekerheid
       // Points krijgen 100, Areas krijgen 1
-      if (isArea) m.getElement().style.zIndex = "1";
+      if (isArea) m.getElement().style.zIndex = "20";
       // Leave point markers without an inline z-index so CSS :hover can take effect
 
       markers.push(m);
@@ -805,7 +828,7 @@
           <div class="popup-info-row">
             <span class="label">Locatie / Gebied</span>
             <span class="popup-value"
-              >{selectedPlace.gebied || "Rotterdam"}</span
+              >{formatGebiedLabel(selectedPlace.gebied)}</span
             >
           </div>
 
@@ -935,6 +958,8 @@
   .search-group {
     margin-bottom: 12px;
     position: relative;
+    margin-left: 20px;
+    margin-right: 20px;
   }
   .search-input {
     width: 100%;
@@ -1290,25 +1315,9 @@
       0 2px 6px rgba(0, 0, 0, 0.2);
   }
 
-  /* AREA MARKERS (Nieuw: Alleen groot icon in het midden van het gebied) */
-  /* AREA MARKERS */
+  /* AREA MARKERS: Same marker styling as points, only color overrides */
   :global(.air-area-marker) {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10;
-  }
-
-  :global(.air-area-marker:hover) {
-    /* NIEUW: Wordt 40% groter en komt naar de voorgrond */
-    transform: scale(1.2);
-    /* z-index: 500; */
-  }
-  /* Bij active krijgt het icoon de welbekende paarse glow via een CSS filter op de icon */
-  :global(.air-area-marker.active-glow i) {
-    filter: drop-shadow(0 0 8px rgba(132, 80, 255, 0.8)) !important;
-    transform: scale(1.1);
+    z-index: 20;
   }
 
   :global(.sidebar-icon) {
