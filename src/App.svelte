@@ -3,20 +3,18 @@
   import maplibregl from "maplibre-gl";
   import Papa from "papaparse";
   import "maplibre-gl/dist/maplibre-gl.css";
-  import { on } from "svelte/events";
-
-  // todo: search bar aanpassen!!!!
 
   // --- STATE ---
   let mapContainer = $state();
   let map = $state();
-  let mapLoaded = $state(false); // Nieuw: houdt bij of we veilig kleuren kunnen updaten
+  let mapLoaded = $state(false);
   let allPlaces = $state([]);
-  let gebiedToCentroid = $state({});
   let markers = [];
   let markerMap = new Map();
   let visualMode = $state("domein");
   let allGeoFeatures = $state([]);
+  let currentOpacities = new Map();
+  let opacityAnimationFrame = null;
 
   /** @type {any} */
   let selectedPlace = $state(null);
@@ -24,7 +22,7 @@
   let enlargedImage = $state(null);
 
   // --- MAP OPZETTEN ---
-  function initMap() {
+  function initMap(geoData) {
     map = new maplibregl.Map({
       container: mapContainer,
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
@@ -33,39 +31,42 @@
       attributionControl: true,
     });
 
+    // Add navigation controls (zoom, rotate)
+    map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+
+    // Add geolocation control (current location)
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: {
+          enableHighAccuracy: true,
+        },
+        trackUserLocation: true,
+      }),
+      "bottom-right",
+    );
+
     map.on("load", () => {
       map.addSource("rotterdam-buurten", {
         type: "geojson",
-        data: "rotterdam-buurten.json",
+        data: geoData,
       });
 
-      // 1. Fill laag: houden we nagenoeg transparant voor een subtiele basis
       map.addLayer(
         {
           id: "buurten-fill",
           type: "fill",
           source: "rotterdam-buurten",
           paint: {
-            "fill-color": "#000",
-            "fill-opacity": 0.9,
+            "fill-color": "#5d69fb",
+            "fill-opacity": [
+              "coalesce",
+              ["feature-state", "highlightOpacity"],
+              0,
+            ],
           },
         },
         "watername_ocean",
       );
-
-      // 3. De scherpe outline laag
-      // map.addLayer(
-      //   {
-      //     id: "buurten-outlines",
-      //     type: "line",
-      //     source: "rotterdam-buurten",
-      //     paint: {
-      //       "line-color": "transparent", // <--- Altijd onzichtbaar
-      //       "line-width": 0.0,
-      //     },
-      //   },
-      //   "watername_ocean",
-      // );
 
       mapLoaded = true;
     });
@@ -76,6 +77,8 @@
   }
 
   // --- CONFIGURATIES ---
+  const LARGE_AREA_ZOOM = 11;
+
   const DOMEIN_COLORS = {
     Wonen: "#ba2585",
     Welzijn: "#804895",
@@ -143,15 +146,15 @@
   };
 
   const KOEPEL_COLORS = {
-    Welzijnscoalitie: "#FF4F87", // helderder roze
-    "Rotterdam Circulair": "#7B61FF", // duidelijker paars
-    "Energie van Rotterdam": "#FFB000", // warm geel/oranje
-    Groen010: "#00A86B", // frisse groene tint
-    "De Groene Connectie": "#2EC4B6", // turquoisegroen
-    "Rotterdams Weerwoord": "#2563EB", // helder blauw
-    Thuismakerscollectief: "#FF5A36", // contrastrijk rood/oranje
-    RoCoCo: "#4D9DE0", // licht staalblauw
-    default: "#C7D2FE",
+    "Energie van Rotterdam": "#F48A8A", // Energie (iets minder pastel rood/koraal)
+    "Rotterdam Circulair": "#FBBF72", // Circulair (iets minder pastel oranje)
+    Groen010: "#86EFAC", // Groen
+    "De Groene Connectie": "#5EEAD4", // Teal
+    "Rotterdams Weerwoord": "#7DD3FC", // Klimaat blauw
+    "Welzijnscoalitie Delfshaven": "#D8B4FE", // Paars
+    Thuismakerscollectief: "#F9A8D4", // Roze
+    RoCoCo: "#A5B4FC", // Indigo
+    default: "#5d69fb",
   };
 
   // --- UI STATE ---
@@ -178,6 +181,38 @@
   let showAreasOnly = $state(false);
   let showAll = $state(true);
   let searchQuery = $state("");
+  let highlightedSearchIndex = $state(-1);
+  let mobileSidebarOpen = $state(false);
+
+  $effect(() => {
+    // Reset index whenever search query changes
+    searchQuery;
+    highlightedSearchIndex = -1;
+  });
+
+  function handleSearchKeyDown(e) {
+    if (searchSuggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      highlightedSearchIndex =
+        (highlightedSearchIndex + 1) % searchSuggestions.length;
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      highlightedSearchIndex =
+        (highlightedSearchIndex - 1 + searchSuggestions.length) %
+        searchSuggestions.length;
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (
+        highlightedSearchIndex >= 0 &&
+        highlightedSearchIndex < searchSuggestions.length
+      ) {
+        selectPlaceOnMap(searchSuggestions[highlightedSearchIndex]);
+        searchQuery = ""; // Clear search after selection
+      }
+    }
+  }
 
   function selectPlaceOnMap(place) {
     activatePlaceOnMap(place);
@@ -217,28 +252,40 @@
       : { top: 60, bottom: 60, left: 60, right: 60 };
 
     if (place.location_type === "area") {
-      const areaBounds = getAreaBounds(place.gebied);
-      if (areaBounds && !areaBounds.isEmpty()) {
-        const areaPadding = isMobile
-          ? { top: 100, bottom: 100, left: 20, right: 20 }
-          : { top: 160, bottom: 60, left: 100, right: 250 };
-        map.fitBounds(areaBounds, {
-          padding: areaPadding,
-          speed: 0.8,
-          curve: 1.2,
-          essential: true,
-        });
-      } else {
+      const areaGebieden = (place.gebied || "").split(";").map((g) => g.trim());
+      const isLargeArea = areaGebieden.length > 15;
+
+      if (isLargeArea) {
         map.flyTo({
           center: [place.longitude, place.latitude],
-          zoom: 14,
+          zoom: LARGE_AREA_ZOOM,
           padding,
           speed: 0.8,
           essential: true,
         });
+      } else {
+        const areaBounds = getAreaBounds(place.gebied);
+        if (areaBounds && !areaBounds.isEmpty()) {
+          const areaPadding = isMobile
+            ? { top: 100, bottom: 100, left: 20, right: 20 }
+            : { top: 160, bottom: 60, left: 100, right: 250 };
+          map.fitBounds(areaBounds, {
+            padding: areaPadding,
+            speed: 0.8,
+            curve: 1.2,
+            essential: true,
+          });
+        } else {
+          map.flyTo({
+            center: [place.longitude, place.latitude],
+            zoom: 14,
+            padding,
+            speed: 0.8,
+            essential: true,
+          });
+        }
       }
 
-      const areaGebieden = (place.gebied || "").split(";").map((g) => g.trim());
       clickedAreaGebieden = areaGebieden.filter(Boolean);
     } else {
       map.flyTo({
@@ -348,26 +395,6 @@
       : [],
   );
 
-  function computeCentroid(geometry) {
-    if (geometry.type === "Polygon") {
-      const coords = geometry.coordinates[0]; // outer ring
-      let sumLng = 0,
-        sumLat = 0;
-      coords.forEach((coord) => {
-        sumLng += coord[0];
-        sumLat += coord[1];
-      });
-      return [sumLng / coords.length, sumLat / coords.length];
-    } else if (geometry.type === "MultiPolygon") {
-      // For simplicity, take first polygon
-      return computeCentroid({
-        type: "Polygon",
-        coordinates: geometry.coordinates[0],
-      });
-    }
-    return null;
-  }
-
   /** @param {string} name */
   function normalizeBuurtName(name) {
     if (!name) return "";
@@ -444,20 +471,27 @@
     return parts.join("; ");
   }
 
+  let buurtToFeatureIds = new Map();
+
   // --- DATA INLADEN ---
   onMount(async () => {
     const response = await fetch("initiatieven.csv");
     const csvString = await response.text();
     const geoResponse = await fetch("rotterdam-buurten.json");
     const geoData = await geoResponse.json();
+
+    // Assign numeric IDs for feature-state
+    geoData.features.forEach((f, i) => (f.id = i));
     allGeoFeatures = geoData.features;
 
-    gebiedToCentroid = {};
+    buurtToFeatureIds = new Map();
     geoData.features.forEach((feature) => {
       const buurtnaam = feature.properties.buurtnaam;
-      const centroid = computeCentroid(feature.geometry);
-      if (centroid) {
-        gebiedToCentroid[buurtnaam] = centroid;
+      if (buurtnaam) {
+        if (!buurtToFeatureIds.has(buurtnaam)) {
+          buurtToFeatureIds.set(buurtnaam, []);
+        }
+        buurtToFeatureIds.get(buurtnaam).push(feature.id);
       }
     });
 
@@ -497,10 +531,7 @@
 
         ensureUniqueCoordinates(allPlaces);
 
-        // Area initiatives now use their coordinates directly from the CSV
-        // No modifications needed
-
-        initMap();
+        initMap(geoData);
       },
     });
   });
@@ -515,6 +546,7 @@
     clickedAreaGebieden = [];
   }
 
+  let highlightedFeatureIds = new Set();
   $effect(() => {
     if (!mapLoaded || !map) return;
 
@@ -522,48 +554,87 @@
     const hoveredSet = new Set(hoveredAreaGebieden);
     const clickedSet = new Set(clickedAreaGebieden);
 
-    // Als er geen areas zijn, alles onzichtbaar maken
-    if (areas.length === 0) {
-      // map.setPaintProperty("buurten-glow", "line-color", "transparent");
-      map.setPaintProperty("buurten-fill", "fill-color", "transparent");
-      // map.setPaintProperty("buurten-outlines", "line-color", "transparent");
-      return;
-    }
-
-    // Build an opacity match expression per buurt; color will be a constant purple
-    let opacityExpr = ["match", ["get", "buurtnaam"]];
-    const gebiedCounts = new Map();
-
-    // Collect all gebieden that have initiatives
+    const nextHighlightedIds = new Set();
     areas.forEach((p) => {
       const gebieden = p.gebied.split(";").map((g) => g.trim());
       gebieden.forEach((gebied) => {
-        gebiedCounts.set(gebied, true);
+        if (hoveredSet.has(gebied) || clickedSet.has(gebied)) {
+          const ids = buurtToFeatureIds.get(gebied) || [];
+          ids.forEach((id) => nextHighlightedIds.add(id));
+        }
       });
     });
 
-    // All gebieden with initiatives get the same base opacity; hovered/clicked get 0.5
-    gebiedCounts.forEach((_, gebied) => {
-      const isClicked = clickedSet.has(gebied);
-      const isHovered = hoveredSet.has(gebied);
-
-      let opacity = 0.0; // Base opacity for all buurten with initiatives
-      if (isHovered || isClicked) {
-        opacity = 0.3; // Increased opacity when hovered or clicked
+    // Un-highlight features that are no longer highlighted
+    highlightedFeatureIds.forEach((id) => {
+      if (!nextHighlightedIds.has(id)) {
+        map.setFeatureState(
+          { source: "rotterdam-buurten", id },
+          { highlight: false },
+        );
       }
-      opacityExpr.push(gebied, opacity);
     });
-    // Default opacity for buurten with no initiatives
-    opacityExpr.push(0);
 
-    // Set constant fill color and drive opacity per-buurt via the match expression.
-    map.setPaintProperty("buurten-fill", "fill-color", "#5d69fb");
-    map.setPaintProperty("buurten-fill", "fill-opacity", opacityExpr);
-    // Smooth transitions for opacity changes
-    map.setPaintProperty("buurten-fill", "fill-opacity-transition", {
-      duration: 400,
-      delay: 0,
+    // Highlight new features
+    nextHighlightedIds.forEach((id) => {
+      if (!highlightedFeatureIds.has(id)) {
+        map.setFeatureState(
+          { source: "rotterdam-buurten", id },
+          { highlight: true },
+        );
+      }
     });
+
+    highlightedFeatureIds = nextHighlightedIds;
+
+    // --- ANIMATION LOOP ---
+    const targetOpacities = new Map();
+    const duration = 400;
+    const maxOpacity = 0.3;
+
+    nextHighlightedIds.forEach((id) => targetOpacities.set(id, maxOpacity));
+
+    currentOpacities.forEach((_, id) => {
+      if (!targetOpacities.has(id)) {
+        targetOpacities.set(id, 0);
+      }
+    });
+
+    if (opacityAnimationFrame) cancelAnimationFrame(opacityAnimationFrame);
+
+    const startTime = performance.now();
+    const startOpacities = new Map(currentOpacities);
+
+    function animateOpacity(time) {
+      const progress = Math.min((time - startTime) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 2);
+
+      let needsNextFrame = false;
+
+      targetOpacities.forEach((targetVal, id) => {
+        const startVal = startOpacities.get(id) || 0;
+        const currentVal = startVal + (targetVal - startVal) * ease;
+
+        currentOpacities.set(id, currentVal);
+
+        map.setFeatureState(
+          { source: "rotterdam-buurten", id },
+          { highlightOpacity: currentVal },
+        );
+
+        if (progress < 1) {
+          needsNextFrame = true;
+        } else if (targetVal === 0) {
+          currentOpacities.delete(id);
+        }
+      });
+
+      if (needsNextFrame) {
+        opacityAnimationFrame = requestAnimationFrame(animateOpacity);
+      }
+    }
+
+    opacityAnimationFrame = requestAnimationFrame(animateOpacity);
   });
 
   // --- MARKERS UPDATEN ---
@@ -573,118 +644,7 @@
     markers = [];
     markerMap.clear();
 
-    // STAP 1: Sorteer zodat 'area' altijd eerst komt (onderop de stapel)
-    const sortedPlaces = [...filteredPlaces].sort((a, b) => {
-      if (a.location_type === "area" && b.location_type === "point") return -1;
-      if (a.location_type === "point" && b.location_type === "area") return 1;
-      return 0;
-    });
-
-    const areaPositionMap = new Map();
-    // Track hover state for grouped markers so we can keep them expanded
-    const groupHoverStates = new Map();
-
-    function spreadGroup(groupKey, groupList) {
-      if (!map || !mapContainer) return;
-      // if already expanded, cancel pending collapse and keep expanded
-      if (groupHoverStates.has(groupKey)) {
-        const st = groupHoverStates.get(groupKey) || {};
-        if (st.collapseTimer) {
-          clearTimeout(st.collapseTimer);
-          st.collapseTimer = null;
-          groupHoverStates.set(groupKey, st);
-        }
-        return;
-      }
-      const parts = groupKey.split("|");
-      const lng = parseFloat(parts[0]);
-      const lat = parseFloat(parts[1]);
-      const center = map.project([lng, lat]);
-
-      const xSpacing = 22;
-      const ySpacing = 10;
-      const totalWidth = (groupList.length - 1) * xSpacing;
-      const startX = -totalWidth / 2;
-
-      groupList.forEach((placeInGroup, idx) => {
-        const markerEntry = markerMap.get(placeInGroup);
-        if (!markerEntry) return;
-        markerEntry.element.classList.add("spread");
-        const x = startX + idx * xSpacing;
-        const y = idx % 2 === 0 ? -ySpacing : ySpacing;
-        markerEntry.marker.setOffset([x, y]);
-        const inner = markerEntry.element.querySelector(".area-marker-inner");
-        // if (inner) inner.style.transform = "scale(1.08)";
-      });
-
-      // on mouse leave, opacity should go back to 0
-      const onMove = (e) => {
-        const buffer = 40; // pixels
-        const rect = mapContainer.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        if (
-          mouseX < center.x - buffer ||
-          mouseX > center.x + buffer ||
-          mouseY < center.y - buffer ||
-          mouseY > center.y + buffer
-        ) {
-          collapseGroup(groupKey, groupList);
-        }
-      };
-
-      const onLeaveMap = () => {
-        // if pointer leaves map entirely, collapse after short delay
-        const state = groupHoverStates.get(groupKey) || {};
-        if (!state.collapseTimer) {
-          state.collapseTimer = setTimeout(
-            () => collapseGroup(groupKey, groupList),
-            250,
-          );
-          groupHoverStates.set(groupKey, state);
-        }
-      };
-
-      mapContainer.addEventListener("mousemove", onMove);
-      mapContainer.addEventListener("mouseleave", onLeaveMap);
-      groupHoverStates.set(groupKey, {
-        onMove,
-        onLeaveMap,
-        collapseTimer: null,
-      });
-    }
-
-    // function collapseGroup(groupKey, groupList) {
-    //   const state = groupHoverStates.get(groupKey);
-    //   groupList.forEach((placeInGroup) => {
-    //     const markerEntry = markerMap.get(placeInGroup);
-    //     if (!markerEntry) return;
-    //     markerEntry.marker.setOffset([0, 0]);
-    //     const inner = markerEntry.element.querySelector(".area-marker-inner");
-    //     if (inner) inner.style.transform = "scale(1)";
-    //     // remove spread class after transition
-    //     markerEntry.element.classList.remove("spread");
-    //   });
-    //   // cleanup listeners
-    //   if (state) {
-    //     if (state.onMove)
-    //       mapContainer.removeEventListener("mousemove", state.onMove);
-    //     if (state.onLeaveMap)
-    //       mapContainer.removeEventListener("mouseleave", state.onLeaveMap);
-    //     if (state.collapseTimer) clearTimeout(state.collapseTimer);
-    //   }
-    //   groupHoverStates.delete(groupKey);
-    //   hoveredAreaGebieden = [];
-    // }
-    sortedPlaces.forEach((place) => {
-      if (place.location_type !== "area") return;
-      const key = `${place.longitude}|${place.latitude}`;
-      const list = areaPositionMap.get(key) || [];
-      list.push(place);
-      areaPositionMap.set(key, list);
-    });
-
-    sortedPlaces.forEach((place) => {
+    filteredPlaces.forEach((place) => {
       const el = document.createElement("div");
       const isArea = place.location_type === "area";
 
@@ -709,26 +669,27 @@
       }
 
       if (isArea) {
-        // --- AREA MARKER: Same marker behavior as points, with purple bg and white border/icon ---
         el.style.backgroundColor = "#5d69fb";
-        el.style.borderColor = "#ffffff";
+        if (visualMode === "koepel") {
+          const koepelKey =
+            (place.koepels || "").split(";").map((k) => k.trim())[0] ||
+            "default";
+          el.style.borderColor =
+            KOEPEL_COLORS[koepelKey] || KOEPEL_COLORS.default;
+        } else {
+          el.style.borderColor = "#ffffff";
+        }
         const areaGebieden = (place.gebied || "")
           .split(";")
           .map((g) => g.trim());
-        const groupKey = `${place.longitude}|${place.latitude}`;
-        const groupList = areaPositionMap.get(groupKey) || [];
         el.addEventListener("mouseenter", () => {
-          // Mark hovered gebieden (kleuren op kaart)
           hoveredAreaGebieden = areaGebieden.filter(Boolean);
-          // Geen spread/offset zodat markers niet omhoog springen
         });
 
         el.addEventListener("mouseleave", () => {
-          // Don't immediately collapse — collapseGroup will be triggered by the
-          // mapContainer mousemove/onLeave handlers when the pointer leaves the buffer.
+          hoveredAreaGebieden = [];
         });
       } else {
-        // --- POINT MARKER: Originele logica (witte pilvorm met evt. meerdere icoontjes) ---
         if (visualMode === "gebied") {
           const gebiedKey = place.gebied || "default";
           el.style.borderColor =
@@ -750,19 +711,9 @@
         activatePlaceOnMap(place);
       });
 
-      const offset = /** @type {[number, number]} */ ([0, 0]);
-      if (isArea) {
-        // Area markers start stacked on top of each other (offset 0,0)
-        // They spread into a circle on hover (handled in mouseenter)
-      }
-      const m = new maplibregl.Marker({ element: el, offset })
+      const m = new maplibregl.Marker({ element: el })
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
-
-      // STAP 2: Forceer de z-index via de Marker methode voor extra zekerheid
-      // Points krijgen 100, Areas krijgen 1
-      if (isArea) m.getElement().style.zIndex = "20";
-      // Leave point markers without an inline z-index so CSS :hover can take effect
 
       markers.push(m);
       markerMap.set(place, { element: el, marker: m });
@@ -809,9 +760,19 @@
 <div class="layout" onclick={closePopup} role="presentation">
   <aside
     class="sidebar"
+    class:open={mobileSidebarOpen}
     onclick={(e) => e.stopPropagation()}
     role="presentation"
   >
+    <button
+      class="mobile-toggle"
+      onclick={() => (mobileSidebarOpen = !mobileSidebarOpen)}
+    >
+      <div class="toggle-content">
+        <i class="ph {mobileSidebarOpen ? 'ph-caret-down' : 'ph-caret-up'}"></i>
+        <span class="menu-text">menu</span>
+      </div>
+    </button>
     <div class="brand">Initiatievenkaart</div>
 
     <div class="sidebar-inner">
@@ -821,13 +782,15 @@
           class="search-input"
           placeholder="Zoek op initiatiefnaam"
           bind:value={searchQuery}
+          onkeydown={handleSearchKeyDown}
         />
         {#if searchSuggestions.length > 0}
           <ul class="search-suggestions">
-            {#each searchSuggestions as suggestion}
+            {#each searchSuggestions as suggestion, i}
               <li>
                 <button
                   class="search-suggestion"
+                  class:highlighted={i === highlightedSearchIndex}
                   onclick={() => selectPlaceOnMap(suggestion)}
                   type="button"
                 >
@@ -893,7 +856,7 @@
         {/if}
       </div>
 
-      <div class="accordion">
+      <!-- <div class="accordion">
         <button
           class="accordion-header"
           onclick={() => toggleSection("gebied")}
@@ -902,8 +865,8 @@
           <span class="icon">{openSections.gebied ? "−" : "+"}</span>
         </button>
         {#if openSections.gebied}
-          <div class="accordion-content">
-            <!-- <div class="visual-toggle-container">
+          <div class="accordion-content"> -->
+      <!-- <div class="visual-toggle-container">
             <span class="toggle-text">Toon kleuren per gebied</span>
             <label class="switch">
               <input
@@ -914,7 +877,7 @@
               <span class="slider"></span>
             </label>
           </div> -->
-            <hr class="separator" />
+      <!-- <hr class="separator" />
             {#each uniqueGebieden as gebied}
               <label class="filter-item">
                 <input
@@ -933,7 +896,7 @@
             {/each}
           </div>
         {/if}
-      </div>
+      </div> -->
 
       <div class="accordion">
         <button
@@ -988,7 +951,7 @@
               showAll = false;
             }}
           />
-          <span class="legend-text">Toon plekken</span>
+          <span class="legend-text">Toon alleen plekken</span>
           <span class="legend-marker legend-marker-point" aria-hidden="true"
           ></span>
         </label>
@@ -1003,7 +966,7 @@
               showAll = false;
             }}
           />
-          <span class="legend-text">Toon netwerken en wijken</span>
+          <span class="legend-text">Toon alleen netwerken en wijken</span>
           <span class="legend-marker legend-marker-area" aria-hidden="true"
           ></span>
         </label>
@@ -1018,7 +981,7 @@
               showAll = true;
             }}
           />
-          <span class="legend-text">Toon alles</span>
+          <span class="legend-text">Toon alle initiatieven</span>
         </label>
       </div>
 
@@ -1077,14 +1040,21 @@
         </div>
 
         <div class="air-popup">
-          <div class="popup-info-row">
+          <div class="popup-info-row location-row">
             <span class="label">Locatie / Gebied</span>
-            <span class="popup-value"
-              >{formatGebiedLabel(selectedPlace.gebied)}</span
-            >
+            <div class="popup-tags">
+              {#each formatGebiedLabel(selectedPlace.gebied)
+                .split(";")
+                .map((g) => g.trim())
+                .filter(Boolean) as buurt}
+                <span class="p-tag buurt-tag">
+                  {buurt}
+                </span>
+              {/each}
+            </div>
           </div>
 
-          <div class="popup-info-row">
+          <div class="popup-info-row domains-row">
             <span class="label">Domeinen</span>
             <div class="popup-tags">
               {#each [...new Set((selectedPlace.domeinen || "")
@@ -1101,9 +1071,9 @@
             </div>
           </div>
 
-          {#if selectedPlace.koepels}
-            <div class="popup-info-row">
-              <span class="label">Dit initiatief valt onder de koepel:</span>
+          <div class="popup-info-row koepel-row">
+            {#if selectedPlace.koepels}
+              <span class="label">Koepel</span>
               <div class="popup-tags">
                 {#each selectedPlace.koepels.split(";") as koepel}
                   <span
@@ -1115,16 +1085,21 @@
                   </span>
                 {/each}
               </div>
-            </div>
-          {/if}
+            {/if}
+          </div>
 
-          {#if selectedPlace.website}
-            <div class="popup-footer">
-              <a href={selectedPlace.website} target="_blank" class="popup-link"
-                >Bezoek website ↗</a
-              >
-            </div>
-          {/if}
+          <div class="popup-info-row website-row">
+            {#if selectedPlace.website}
+              <span class="label">Website</span>
+              <div class="popup-footer">
+                <a
+                  href={selectedPlace.website}
+                  target="_blank"
+                  class="popup-link">Bezoek website ↗</a
+                >
+              </div>
+            {/if}
+          </div>
         </div>
       </div>
     {/if}
@@ -1167,12 +1142,54 @@
       bottom: 0;
       left: 0;
       width: 100%;
-      height: 28vh;
-      max-height: 28vh;
+      height: 50vh;
+      max-height: 50vh;
       border-right: none;
       border-top: 1px solid rgba(0, 0, 0, 0.1);
       box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
       z-index: 2000;
+      transform: translateY(calc(50vh - 50px));
+      transition: transform 0.3s ease-in-out;
+    }
+
+    .sidebar.open {
+      transform: translateY(0);
+    }
+
+    .mobile-toggle {
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 50px;
+      background: #fbf9f9;
+      border: none;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      font-family: inherit;
+      color: #5d69fb;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .toggle-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1;
+    }
+
+    .toggle-content i {
+      font-size: 1.2rem;
+      margin-bottom: -2px;
+    }
+
+    .menu-text {
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.1rem;
+      padding-bottom: 12px;
+      padding-top: 4px;
     }
 
     .brand,
@@ -1181,7 +1198,7 @@
       display: none !important;
     }
     .accordion-content {
-      max-height: 22vh;
+      max-height: 40vh;
       overflow-y: auto;
     }
 
@@ -1190,17 +1207,96 @@
     }
 
     .fixed-air-popup {
-      top: 2px !important;
+      top: 10px !important;
       right: unset !important;
       left: 50% !important;
       transform: translateX(-50%) !important;
-      width: calc(100% - 40px) !important;
-      max-width: 360px !important;
-
-      max-height: 30vh !important;
-
-      overflow-y: auto;
+      width: 90% !important;
+      max-width: 400px !important;
+      max-height: none !important;
+      border-radius: 8px !important;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
+      border: 1px solid rgba(0, 0, 0, 0.05) !important;
+      overflow-y: hidden !important;
     }
+
+    .popup-top-bar {
+      min-height: 40px !important;
+      padding: 6px 12px !important;
+    }
+
+    .popup-title {
+      font-size: 0.9rem !important;
+      line-height: 1.1 !important;
+    }
+
+    .air-popup {
+      padding: 6px 12px !important;
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      grid-template-rows: auto auto !important;
+      column-gap: 16px !important;
+      row-gap: 8px !important;
+      align-items: flex-start !important;
+    }
+
+    .location-row {
+      grid-area: 1 / 1 / 2 / 2;
+    }
+    .domains-row {
+      grid-area: 1 / 2 / 2 / 3;
+    }
+    .koepel-row {
+      grid-area: 2 / 1 / 3 / 2;
+    }
+    .website-row {
+      grid-area: 2 / 2 / 3 / 3;
+    }
+
+    .popup-info-row {
+      margin-bottom: 0 !important;
+      flex: none !important;
+      width: 100% !important;
+    }
+
+    .popup-info-row .label {
+      font-size: 0.6rem !important;
+      margin-bottom: 2px !important;
+    }
+
+    .popup-tags {
+      margin-top: 0 !important;
+    }
+
+    .p-tag {
+      font-size: 8px !important;
+      padding: 2px 4px !important;
+      margin-bottom: 5px !important;
+    }
+
+    .buurt-tag {
+      font-size: 7.5px !important;
+    }
+
+    .popup-footer {
+      width: 100%;
+      margin-top: 0 !important;
+      padding-top: 0 !important;
+      border-top: none !important;
+    }
+
+    .popup-link {
+      font-size: 10px !important;
+    }
+
+    /* Move map controls up on mobile to avoid sidebar handle */
+    :global(.maplibregl-ctrl-bottom-right) {
+      bottom: 50px !important;
+    }
+  }
+
+  .mobile-toggle {
+    display: none;
   }
 
   .brand {
@@ -1268,6 +1364,10 @@
   }
   .search-suggestion:hover {
     background: #f5f5f5;
+  }
+  .search-suggestion.highlighted {
+    background: #5d69fb;
+    color: #fff;
   }
   .accordion {
     border-bottom: 1px solid #e0ddd5;
@@ -1337,6 +1437,7 @@
     font-weight: bold;
     background: #fbf9f9;
     border-top: 1px solid rgba(0, 0, 0, 0.05);
+    margin-bottom: 0;
   }
   .stats strong {
     color: #5d69fb;
@@ -1528,6 +1629,12 @@
     display: inline-block;
     border-radius: 5px;
   }
+  .buurt-tag {
+    background-color: #999;
+    color: #fff !important;
+    font-size: 7.5px;
+    padding: 1px 4px;
+  }
   .popup-tags {
     display: flex;
     flex-wrap: wrap;
@@ -1587,21 +1694,10 @@
       0 2px 6px rgba(0, 0, 0, 0.2);
   }
 
-  /* AREA MARKERS: Same marker styling as points, only color overrides */
+  /* AREA MARKERS: Transparent style to blend with background */
   :global(.air-area-marker) {
-    z-index: 20;
-
-    /* so legend marker can reuse the same look */
     border: 2px solid #ffffff;
-
-    /* NO transform transition here */
-    /* transition: box-shadow 0.25s ease; */
   }
-
-  /* Enable transform transition only while the group is spreading */
-  /* :global(.air-area-marker.spread) {
-    transition:;
-     transform 0.4s cubic-bezier(0.34, 1.56, 0.64,; 1),   } */
 
   @keyframes area-fade-in {
     from {
@@ -1619,10 +1715,6 @@
     gap: 2px;
     width: 100%;
     height: 100%;
-
-    /* transition:
-      transform 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 0.25s ease; */
   }
 
   :global(.sidebar-icon) {
