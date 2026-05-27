@@ -20,7 +20,7 @@
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
   let enlargedImage = $state(null);
-  let isMobile = $state(window.innerWidth < 900);
+  let isMobile = $state(false);
 
   // --- MAP OPZETTEN ---
   function initMap(geoData) {
@@ -160,6 +160,17 @@
     default: "#5d69fb",
   };
 
+  const KOEPEL_WEBSITES = {
+    "Energie van Rotterdam": "https://energievanrotterdam.nl/",
+    "Rotterdam Circulair": "https://www.rotterdamcirculair.nl/",
+    Groen010: "https://www.groen010.net/",
+    "De Groene Connectie": "https://degroeneconnectie.nl/",
+    "Rotterdams Weerwoord": "https://www.rotterdamsweerwoord.nl/",
+    "Welzijnscoalitie Delfshaven": "https://welzijnscoalitie.nl/", // Filler
+    Thuismakerscollectief: "https://thuismakerscollectief.nl/", // Filler
+    RoCoCo: "https://rococo.coop/", // Filler
+  };
+
   // --- UI STATE ---
   let openSections = $state({
     info: false,
@@ -180,10 +191,9 @@
 
   let hoveredAreaGebieden = $state([]);
 
-  let showOnlyPoints = $state(false);
-  let showAreasOnly = $state(false);
-  let showAll = $state(true);
+  let locationFilterMode = $state("all"); // "points", "areas", or "all"
   let searchQuery = $state("");
+  let searchFocused = $state(false);
   let highlightedSearchIndex = $state(-1);
   let mobileSidebarOpen = $state(false);
 
@@ -192,6 +202,15 @@
     searchQuery;
     highlightedSearchIndex = -1;
   });
+
+  function resetFilters() {
+    searchQuery = "";
+    selectedDomeinen = [];
+    selectedKoepels = [];
+    selectedGebieden = [];
+    locationFilterMode = "all";
+    visualMode = "domein";
+  }
 
   function handleSearchKeyDown(e) {
     if (searchSuggestions.length === 0) return;
@@ -245,8 +264,8 @@
     // Op mobiel: onderin het menu, bovenin de popup.
     const padding = isMobile
       ? {
-          top: 240, // Ruimte voor popup
-          bottom: mobileSidebarOpen ? window.innerHeight * 0.5 + 40 : 70,
+          top: 280, // Ruimte voor de top header (60) + popup (start op 80)
+          bottom: mobileSidebarOpen ? window.innerHeight * 0.5 + 20 : 60,
           left: 20,
           right: 20,
         }
@@ -346,11 +365,12 @@
       const matchesDomein =
         selectedDomeinen.length === 0 ||
         selectedDomeinen.every((d) => placeDomeinen.includes(d));
-      const matchesLocation = showOnlyPoints
-        ? p.location_type === "point"
-        : showAreasOnly
-          ? p.location_type === "area"
-          : true;
+      const matchesLocation =
+        locationFilterMode === "points"
+          ? p.location_type === "point"
+          : locationFilterMode === "areas"
+            ? p.location_type === "area"
+            : true;
       return matchesGebied && matchesKoepel && matchesDomein && matchesLocation;
     }),
   );
@@ -363,6 +383,14 @@
             .includes(searchQuery.trim().toLowerCase()),
         )
       : [],
+  );
+
+  let isAnyFilterActive = $derived(
+    searchQuery.trim().length > 0 ||
+      selectedDomeinen.length > 0 ||
+      selectedKoepels.length > 0 ||
+      selectedGebieden.length > 0 ||
+      locationFilterMode !== "all",
   );
 
   /** @param {string} name */
@@ -443,13 +471,17 @@
 
   let buurtToFeatureIds = new Map();
 
-  // --- DATA INLADEN ---
-  onMount(async () => {
+  $effect(() => {
     const handleResize = () => {
       isMobile = window.innerWidth < 900;
     };
     window.addEventListener("resize", handleResize);
+    handleResize();
+    return () => window.removeEventListener("resize", handleResize);
+  });
 
+  // --- DATA INLADEN ---
+  onMount(async () => {
     const response = await fetch("initiatieven.csv");
     const csvString = await response.text();
     const geoResponse = await fetch("rotterdam-buurten.json");
@@ -615,11 +647,11 @@
   // --- MARKERS UPDATEN ---
   $effect(() => {
     if (!map) return;
-    markers.forEach((m) => m.remove());
-    markers = [];
-    markerMap.clear();
 
     filteredPlaces.forEach((place) => {
+      const container = document.createElement("div");
+      container.className = "marker-container";
+
       const el = document.createElement("div");
       const isArea = place.location_type === "area";
 
@@ -637,15 +669,17 @@
         const iconClass = DOMEIN_ICONS[d] || DOMEIN_ICONS.default;
         iconsHtml += `<i class="ph ${iconClass}" style="color: ${iconColor};"></i>`;
       });
-      if (isArea) {
-        el.innerHTML = `<div class="area-marker-inner">${iconsHtml}</div>`;
-      } else {
-        el.innerHTML = iconsHtml;
-      }
+
+      el.innerHTML = iconsHtml;
+      container.appendChild(el);
 
       if (isArea) {
         el.style.backgroundColor = "#5d69fb";
-        if (visualMode === "koepel") {
+        if (visualMode === "gebied") {
+          const gebiedKey = place.gebied || "default";
+          el.style.borderColor =
+            GEBIED_COLORS[gebiedKey] || GEBIED_COLORS.default;
+        } else if (visualMode === "koepel") {
           const koepelKey =
             (place.koepels || "").split(";").map((k) => k.trim())[0] ||
             "default";
@@ -686,49 +720,24 @@
         activatePlaceOnMap(place);
       });
 
-      const m = new maplibregl.Marker({ element: el })
+      const m = new maplibregl.Marker({ element: container })
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
 
       markers.push(m);
       markerMap.set(place, { element: el, marker: m });
     });
+
+    return () => {
+      markers.forEach((m) => m.remove());
+      markers = [];
+      markerMap.clear();
+    };
   });
 
   function toggleFilter(list, value) {
     if (list.includes(value)) return list.filter((i) => i !== value);
     return [...list, value];
-  }
-
-  // --- HULPFUNCTIE VOOR ZOOM ---
-  function getAreaBounds(gebiedString) {
-    // Check of de data wel geladen is
-    if (!gebiedString || !allGeoFeatures || allGeoFeatures.length === 0)
-      return null;
-
-    const namen = gebiedString.split(";").map((g) => g.trim().toLowerCase());
-    const bounds = new maplibregl.LngLatBounds();
-    let found = false;
-
-    allGeoFeatures.forEach((feature) => {
-      const buurtNaam = feature.properties.buurtnaam?.toLowerCase();
-      if (namen.includes(buurtNaam)) {
-        const coords = feature.geometry.coordinates;
-
-        // Helper om door geneste coördinaten te lopen (Polygon/MultiPolygon)
-        const extendRecursive = (c) => {
-          if (typeof c[0] === "number") {
-            bounds.extend(c);
-            found = true;
-          } else {
-            c.forEach(extendRecursive);
-          }
-        };
-        extendRecursive(coords);
-      }
-    });
-
-    return found ? bounds : null;
   }
 
   // --- Zet dit ergens los op root-niveau in je script ---
@@ -760,6 +769,7 @@
 </script>
 
 <div class="layout" onclick={closePopup} role="presentation">
+  <div class="mobile-header">Initiatievenkaart</div>
   <aside
     class="sidebar"
     class:open={mobileSidebarOpen}
@@ -789,8 +799,10 @@
           placeholder="Zoek op initiatiefnaam"
           bind:value={searchQuery}
           onkeydown={handleSearchKeyDown}
+          onfocus={() => (searchFocused = true)}
+          onblur={() => setTimeout(() => (searchFocused = false), 200)}
         />
-        {#if searchSuggestions.length > 0}
+        {#if searchFocused && searchSuggestions.length > 0}
           <ul class="search-suggestions">
             {#each searchSuggestions as suggestion, i}
               <li>
@@ -815,7 +827,78 @@
         </button>
         {#if openSections.info}
           <div class="accordion-content">
-            <p>Informatie over initiatieven......</p>
+            <section class="initiatives-intro">
+              <p class="lead">
+                Op deze kaart zie je een overzicht van lokale initiatieven die
+                zich inzetten voor de stad. We brengen deze initiatiefkracht in
+                kaart aan de hand van de volgende categorieën:
+              </p>
+
+              <div class="category-list">
+                <div class="category-item">
+                  <span
+                    class="legend-marker legend-marker-point"
+                    aria-hidden="true"
+                  ></span>
+                  <div class="category-text">
+                    <strong>Plekken</strong>
+                    <p>
+                      Initiatieven met een vaste, fysieke locatie in de stad.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="category-item">
+                  <span
+                    class="legend-marker legend-marker-area"
+                    aria-hidden="true"
+                  ></span>
+                  <div class="category-text">
+                    <strong>Wijken & Netwerken</strong>
+                    <p>
+                      Initiatieven die actief zijn in een gebied of wijk, maar
+                      niet per se één vaste locatie hebben.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="category-item">
+                  <span
+                    class="legend-marker legend-marker-koepel"
+                    aria-hidden="true"
+                  ></span>
+                  <div class="category-text">
+                    <strong>Koepels</strong>
+                    <p>
+                      Overkoepelende organisaties die meerdere initiatieven
+                      onder zich hebben en verbinden. Bij een initiatief staat
+                      aangegeven of het onderdeel is van een koepel. Niet alle
+                      initiatieven zijn onderdeel van een koepel.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="category-item">
+                <span
+                  class="domein-icon ph ph-house"
+                  style="color: {DOMEIN_COLORS['Wonen']}"
+                  aria-hidden="true"
+                ></span>
+                <div class="category-text">
+                  <strong>Domeinen</strong>
+                  <p>
+                    De initiatieven zijn onderverdeeld in domeinen. Sommige
+                    initiatieven vallen onder meerdere domeinen.
+                  </p>
+                </div>
+              </div>
+
+              <p class="cta">
+                <strong>Klik op de waardenbloem</strong> en zie hoe de domeinen en
+                categorieën van initiatieven zich tot elkaar verhouden.
+              </p>
+            </section>
             <button
               class="image-button"
               onclick={() => (enlargedImage = "waardebloem.png")}
@@ -945,50 +1028,56 @@
           </div>
         {/if}
       </div>
+      <div class="accordion">
+        <button
+          class="accordion-header"
+          onclick={() => toggleSection("location")}
+        >
+          <span>Locatietype</span>
+          <span class="icon">{openSections.location ? "−" : "+"}</span>
+        </button>
+        {#if openSections.location}
+          <div class="accordion-content">
+            <p>
+              In de kaart worden zowel initiatieven met een fysieke locatie
+              (zoals een buurthuis of park) als initiatieven die zich over een
+              gebied uitstrekken (zoals een netwerk of wijkcoöperatie) getoond.
+              Deze initiatieven hebben niet altijd een fysieke locatie, maar
+              zijn actief in een gebied.
+            </p>
+            <div class="accordion-divider"></div>
+            <label class="filter-item">
+              <input
+                type="checkbox"
+                checked={locationFilterMode === "points"}
+                onchange={() => (locationFilterMode = "points")}
+              />
+              <span class="legend-text">Toon alleen plekken</span>
+              <span class="legend-marker legend-marker-point" aria-hidden="true"
+              ></span>
+            </label>
 
-      <div class="location-filter">
-        <label class="filter-item">
-          <input
-            type="checkbox"
-            checked={showOnlyPoints}
-            onchange={() => {
-              showOnlyPoints = true;
-              showAreasOnly = false;
-              showAll = false;
-            }}
-          />
-          <span class="legend-text">Toon alleen plekken</span>
-          <span class="legend-marker legend-marker-point" aria-hidden="true"
-          ></span>
-        </label>
+            <label class="filter-item">
+              <input
+                type="checkbox"
+                checked={locationFilterMode === "areas"}
+                onchange={() => (locationFilterMode = "areas")}
+              />
+              <span class="legend-text">Toon alleen netwerken en wijken</span>
+              <span class="legend-marker legend-marker-area" aria-hidden="true"
+              ></span>
+            </label>
 
-        <label class="filter-item">
-          <input
-            type="checkbox"
-            checked={showAreasOnly}
-            onchange={() => {
-              showOnlyPoints = false;
-              showAreasOnly = true;
-              showAll = false;
-            }}
-          />
-          <span class="legend-text">Toon alleen netwerken en wijken</span>
-          <span class="legend-marker legend-marker-area" aria-hidden="true"
-          ></span>
-        </label>
-
-        <label class="filter-item">
-          <input
-            type="checkbox"
-            checked={showAll}
-            onchange={() => {
-              showOnlyPoints = false;
-              showAreasOnly = false;
-              showAll = true;
-            }}
-          />
-          <span class="legend-text">Toon alle initiatieven</span>
-        </label>
+            <label class="filter-item">
+              <input
+                type="checkbox"
+                checked={locationFilterMode === "all"}
+                onchange={() => (locationFilterMode = "all")}
+              />
+              <span class="legend-text">Toon alle initiatieven</span>
+            </label>
+          </div>
+        {/if}
       </div>
 
       <div class="accordion">
@@ -1001,9 +1090,7 @@
         </button>
         {#if openSections.contribute}
           <div class="accordion-content">
-            <p
-              style="font-size: 0.9rem; line-height: 1.5; color: #333; padding: 0 8px;"
-            >
+            <p>
               Heb je opmerkingen over de vermelding van jouw initiatief? Of wil
               je je eigen initiatief op de kaart hebben? Stuur een mail naar <a
                 href="mailto:office@airrotterdam.eu"
@@ -1014,10 +1101,17 @@
           </div>
         {/if}
       </div>
+    </div>
 
-      <div class="stats">
-        <strong>{filteredPlaces.length}</strong> initiatieven getoond
-      </div>
+    {#if isAnyFilterActive}
+      <button class="reset-button" onclick={resetFilters}>
+        <i class="ph ph-arrow-counter-clockwise"></i>
+        <span>Reset filters</span>
+      </button>
+    {/if}
+
+    <div class="stats">
+      <strong>{filteredPlaces.length}</strong> initiatieven getoond
     </div>
   </aside>
 
@@ -1086,13 +1180,17 @@
               <span class="label">Koepel</span>
               <div class="popup-tags">
                 {#each selectedPlace.koepels.split(";") as koepel}
-                  <span
+                  {@const kName = koepel.trim()}
+                  <a
+                    href={KOEPEL_WEBSITES[kName] || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     class="p-tag"
-                    style="background-color: {KOEPEL_COLORS[koepel.trim()] ||
-                      KOEPEL_COLORS.default}"
+                    style="background-color: {KOEPEL_COLORS[kName] ||
+                      KOEPEL_COLORS.default}; text-decoration: none;"
                   >
-                    {koepel.trim()}
-                  </span>
+                    {kName}
+                  </a>
                 {/each}
               </div>
             {/if}
@@ -1100,14 +1198,9 @@
 
           <div class="popup-info-row website-row">
             {#if selectedPlace.website}
-              <span class="label">Website</span>
-              <div class="popup-footer">
-                <a
-                  href={selectedPlace.website}
-                  target="_blank"
-                  class="popup-link">Bezoek website ↗</a
-                >
-              </div>
+              <a href={selectedPlace.website} target="_blank" class="popup-link"
+                >Bezoek website ↗</a
+              >
             {/if}
           </div>
         </div>
@@ -1139,26 +1232,82 @@
     display: flex;
     flex-direction: column;
     z-index: 10;
-    overflow-y: auto;
+    overflow-y: hidden;
     scrollbar-gutter: stable;
     font-family: "Helvetica", Arial, sans-serif;
     position: relative;
   }
+  .sidebar-inner {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar-inner::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sidebar-inner::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-inner::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+  }
+  .sidebar-inner::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .mobile-header {
+    display: none;
+  }
 
   @media (max-width: 900px) {
+    .mobile-header {
+      display: flex;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 60px;
+      background: #fbf9f9;
+      color: #5d69fb;
+      font-family: "Helvetica", Arial, sans-serif;
+      font-weight: 900;
+      font-size: 1.4rem;
+      align-items: center;
+      justify-content: center;
+      z-index: 2500;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+
+    .fixed-air-popup {
+      top: 80px !important;
+      right: unset !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      width: 90% !important;
+      max-width: 400px !important;
+      max-height: none !important;
+      border-radius: 8px !important;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
+      border: 1px solid rgba(0, 0, 0, 0.05) !important;
+      overflow-y: hidden !important;
+    }
+
     .sidebar {
       position: fixed;
       top: auto;
       bottom: 0;
       left: 0;
       width: 100%;
-      height: 50vh;
-      max-height: 50vh;
+      height: 50dvh;
+      max-height: 50dvh;
       border-right: none;
       border-top: 1px solid rgba(0, 0, 0, 0.1);
       box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
       z-index: 2000;
-      transform: translateY(calc(50vh - 50px));
+      transform: translateY(calc(50dvh - 50px));
       transition: transform 0.3s ease-in-out;
     }
 
@@ -1179,6 +1328,9 @@
       color: #5d69fb;
       cursor: pointer;
       padding: 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
 
     .toggle-content {
@@ -1203,31 +1355,16 @@
     }
 
     .brand,
-    .stats,
     .sidebar-collapse {
       display: none !important;
     }
     .accordion-content {
-      max-height: 40vh;
-      overflow-y: auto;
+      max-height: none;
+      overflow: visible;
     }
 
     .sidebar {
       padding: 0 8px;
-    }
-
-    .fixed-air-popup {
-      top: 10px !important;
-      right: unset !important;
-      left: 50% !important;
-      transform: translateX(-50%) !important;
-      width: 90% !important;
-      max-width: 400px !important;
-      max-height: none !important;
-      border-radius: 8px !important;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
-      border: 1px solid rgba(0, 0, 0, 0.05) !important;
-      overflow-y: hidden !important;
     }
 
     .popup-top-bar {
@@ -1256,10 +1393,10 @@
     .domains-row {
       grid-area: 1 / 2 / 2 / 3;
     }
-    .koepel-row {
+    .website-row {
       grid-area: 2 / 1 / 3 / 2;
     }
-    .website-row {
+    .koepel-row {
       grid-area: 2 / 2 / 3 / 3;
     }
 
@@ -1276,6 +1413,7 @@
 
     .popup-tags {
       margin-top: 0 !important;
+      margin-bottom: 2px !important;
     }
 
     .p-tag {
@@ -1302,6 +1440,24 @@
     /* Move map controls up on mobile to avoid sidebar handle */
     :global(.maplibregl-ctrl-bottom-right) {
       bottom: 50px !important;
+    }
+
+    .filter-item {
+      gap: 12px;
+      padding: 10px 12px;
+      margin: 2px -12px;
+      font-size: 0.85rem;
+      border-radius: 8px;
+    }
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .reset-button {
+      width: calc(100% - 32px);
+      margin: 12px 16px;
     }
   }
 
@@ -1422,16 +1578,35 @@
     line-height: 1.4;
     margin: 0;
   }
+
+  .accordion-divider {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.05);
+    margin: 12px 0;
+    border: none;
+  }
+
   .filter-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 10px 0;
+    padding: 6px 8px;
+    margin: 4px -8px;
     font-size: 0.8rem;
     color: #333;
     font-weight: 500;
     cursor: pointer;
     text-align: left;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    user-select: none;
+  }
+  .filter-item:hover {
+    background: rgba(93, 105, 251, 0.08);
+  }
+  .filter-item:active {
+    background: rgba(93, 105, 251, 0.15);
+    transform: scale(0.98);
   }
   .filter-text {
     flex-grow: 1;
@@ -1455,6 +1630,7 @@
   }
   input[type="checkbox"] {
     accent-color: #5d69fb;
+    cursor: pointer;
   }
   .visual-toggle-container {
     display: flex;
@@ -1639,6 +1815,13 @@
     display: inline-block;
     border-radius: 5px;
   }
+  a.p-tag {
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  a.p-tag:hover {
+    opacity: 0.8;
+  }
   .buurt-tag {
     background-color: #999;
     color: #fff !important;
@@ -1665,6 +1848,13 @@
   }
 
   /* POINT MARKERS (Oude stijl met border) */
+  :global(.marker-container) {
+    z-index: 100 !important;
+  }
+  :global(.marker-container:hover) {
+    z-index: 1000 !important;
+  }
+
   :global(.air-marker) {
     min-width: 26px;
     height: 26px;
@@ -1679,20 +1869,20 @@
     gap: 2px;
     padding: 0 4px;
     box-sizing: border-box;
-    z-index: 100 !important;
-
-    /* IMPORTANT: no transform transition */
     transition:
+      transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275),
       box-shadow 0.25s ease,
       border-color 0.25s ease;
   }
+
   :global(.air-marker i) {
     font-size: 14px;
     line-height: 1;
   }
-  :global(.air-marker:hover) {
-    z-index: 1000 !important;
-    transform: scale(1.07);
+
+  :global(.marker-container:hover .air-marker) {
+    transform: scale(1.3);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
   }
 
   :global(.air-marker.active-glow) {
@@ -1702,6 +1892,7 @@
       0 0 0 3px #5d69fb33,
       0 0 15px 8px rgba(132, 80, 255, 0.15),
       0 2px 6px rgba(0, 0, 0, 0.2);
+    transform: scale(1.1);
   }
 
   /* AREA MARKERS: Transparent style to blend with background */
@@ -1728,8 +1919,8 @@
   }
 
   :global(.sidebar-icon) {
-    font-size: 16px;
-    width: 20px;
+    font-size: 20px;
+    width: 22px;
     text-align: center;
   }
 
@@ -1762,6 +1953,12 @@
     border: 2px solid #ffffff;
   }
 
+  .legend-marker-koepel {
+    background: #fbbf72;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
   .image-button {
     background: none;
     border: none;
@@ -1772,6 +1969,38 @@
   }
   .image-button:hover img {
     opacity: 0.9;
+  }
+  .reset-button {
+    width: calc(100% - 40px);
+    margin: 12px 20px;
+    padding: 10px;
+    background: white;
+    border: 1px solid #d8d2c8;
+    border-radius: 8px;
+    color: #666;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: sticky;
+    bottom: 0;
+    z-index: 90;
+    box-shadow: 0 -10px 20px #fbf9f9;
+  }
+  .reset-button:hover {
+    background: #f0edeb;
+    color: #5d69fb;
+    border-color: #5d69fb;
+  }
+  .reset-button i {
+    font-size: 1rem;
   }
   .image-modal {
     position: fixed;
@@ -1790,5 +2019,74 @@
     max-width: 90vw;
     max-height: 90vh;
     object-fit: contain;
+  }
+
+  .initiatives-intro {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .initiatives-intro .lead {
+    font-size: 0.85rem;
+    color: #333;
+    line-height: 1.4;
+    margin: 0;
+  }
+
+  .category-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .category-item {
+    background: #ffffff;
+    border: 1px solid #d8d2c8;
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    transition: transform 0.2s ease;
+  }
+
+  .category-item:hover {
+    transform: translateX(4px);
+    border-color: #5d69fb44;
+  }
+
+  .category-text {
+    flex: 1;
+  }
+
+  .category-text strong {
+    display: block;
+    font-size: 0.75rem;
+    color: #5d69fb;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    font-weight: 800;
+    letter-spacing: 0.05rem;
+  }
+
+  .category-item p {
+    margin: 0 !important;
+    font-size: 0.75rem !important;
+  }
+
+  .initiatives-intro .cta {
+    font-size: 0.8rem;
+    color: #666;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    padding-top: 12px;
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  .initiatives-intro .cta strong {
+    color: #5d69fb;
   }
 </style>
