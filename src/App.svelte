@@ -19,6 +19,7 @@
   /** @type {any} */
   let selectedPlace = $state(null);
   let activeMarkerElement = $state(null);
+  let activeMarkerContainer = $state(null);
   let enlargedImage = $state(null);
   let isMobile = $state(false);
 
@@ -243,17 +244,22 @@
   function activatePlaceOnMap(place) {
     if (activeMarkerElement) {
       activeMarkerElement.classList.remove("active-glow");
-      activeMarkerElement.style.zIndex = "";
+    }
+    if (activeMarkerContainer) {
+      activeMarkerContainer.style.zIndex = "";
     }
 
     selectedPlace = place;
     const markerEntry = markerMap.get(place);
     if (markerEntry) {
       activeMarkerElement = markerEntry.element;
+      activeMarkerContainer = markerEntry.container;
       markerEntry.element.classList.add("active-glow");
-      markerEntry.element.style.zIndex = "9999";
+      // We zetten z-index op de container zodat de marker bovenop andere markers komt
+      markerEntry.container.style.zIndex = "9999";
     } else {
       activeMarkerElement = null;
+      activeMarkerContainer = null;
     }
 
     const sidebarWidth = 280;
@@ -546,10 +552,13 @@
   function closePopup() {
     if (activeMarkerElement) {
       activeMarkerElement.classList.remove("active-glow");
-      activeMarkerElement.style.zIndex = "";
+    }
+    if (activeMarkerContainer) {
+      activeMarkerContainer.style.zIndex = "";
     }
     selectedPlace = null;
     activeMarkerElement = null;
+    activeMarkerContainer = null;
     clickedAreaGebieden = [];
   }
 
@@ -724,8 +733,15 @@
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
 
+      if (place === selectedPlace) {
+        el.classList.add("active-glow");
+        container.style.zIndex = "9999";
+        activeMarkerElement = el;
+        activeMarkerContainer = container;
+      }
+
       markers.push(m);
-      markerMap.set(place, { element: el, marker: m });
+      markerMap.set(place, { element: el, container: container, marker: m });
     });
 
     return () => {
@@ -1844,10 +1860,10 @@
 
   /* POINT MARKERS (Oude stijl met border) */
   :global(.marker-container) {
-    z-index: 100 !important;
+    z-index: 100;
   }
   :global(.marker-container:hover) {
-    z-index: 1000 !important;
+    z-index: 1000;
   }
 
   :global(.air-marker) {
@@ -1881,7 +1897,6 @@
   }
 
   :global(.air-marker.active-glow) {
-    z-index: 9999 !important;
     border: 2.5px solid #5d69fb;
     box-shadow:
       0 0 0 3px #5d69fb33,
