@@ -875,8 +875,10 @@
                   <div class="category-text">
                     <strong>Wijken & Netwerken</strong>
                     <p>
-                      Initiatieven die actief zijn in een gebied of wijk, maar
-                      niet per se één vaste locatie hebben.
+                      Wijken: initiatieven die zich richten op een specifieke
+                      wijk of buurt. <br />
+                      Netwerken: initiatieven die verschillende partijen bij elkaar
+                      brengen, en actief zijn in een bepaald gebied.
                     </p>
                   </div>
                 </div>
@@ -920,11 +922,11 @@
             </section>
             <button
               class="image-button"
-              onclick={() => (enlargedImage = "waardebloem.png")}
+              onclick={() => (enlargedImage = "Waardebloem.png")}
               title="klik om te vergroten"
             >
               <img
-                src="waardebloem.png"
+                src="Waardebloem.png"
                 alt="Waardebloem"
                 style="width: 100%; margin-top: 10px;"
               />
